@@ -1,3 +1,5 @@
+pub mod ini_document;
+
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
     #[error("unsupported_platform")]
