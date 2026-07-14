@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "spec": "wuwa-ini-tool-v1",
+  "status": "design-approved",
+  "currentGate": "implementation-plan",
+  "updatedAt": "2026-07-14T00:00:00+09:00",
+  "decisions": [
+    "React TypeScript Vite plus Rust in Tauri v2",
+    "Windows x64 NSIS distribution",
+    "Korean and English UI",
+    "MIT license",
+    "lossless INI merge with diff and verified backups",
+    "integrated launcher and tray process supervisor",
+    "all Windows priority classes are user-selectable with High and Realtime warnings",
+    "original T monogram; no Kuro character derivative"
+  ],
+  "codexThinkPreflight": {
+    "toolDiscoveryAttempted": true,
+    "coreToolsAvailable": false,
+    "fallbackReason": "No codexthink_status, project_docs, route_doc, checkpoint, gate, or handoff tools were exposed after tool discovery. Local spec/checkpoint/evidence files are used as the fallback."
+  },
+  "agents": {
+    "reference-researcher": "completed",
+    "release-security-researcher": "completed",
+    "engine-ini-evidence-researcher": "completed"
+  },
+  "next": "Write and validate the implementation plan"
+}
