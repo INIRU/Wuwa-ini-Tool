@@ -32,6 +32,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - name: Prepare release asset directory
+        run: mkdir -p release-assets
       - name: Generate SPDX JSON SBOM
         uses: anchore/sbom-action@v0
         with:
