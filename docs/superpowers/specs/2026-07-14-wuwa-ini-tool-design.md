@@ -99,6 +99,22 @@ filesystem paths.
 An external hash change invalidates a pending apply. The application reloads
 the source and requires a new diff instead of overwriting it.
 
+### Full Engine.ini import and paste
+
+- The Advanced Editor accepts a complete pasted `Engine.ini` document and has
+  an `Import Engine.ini` action for a local file selected in a native dialog.
+- The imported text becomes a replacement candidate; paste or file selection
+  never writes automatically. The user sees the full unified/split diff and a
+  warning that unrelated or game-generated lines may be removed.
+- Accept only the supported UTF-8, UTF-8 BOM, and UTF-16LE BOM encodings, a
+  bounded file/document size, no NUL corruption, and the same parser safety
+  contract as the current document.
+- A backend-owned dialog/read flow must not expose a general frontend file-read
+  capability. Remote URL download is outside v1; a downloaded file can be
+  selected locally.
+- Apply is permitted only after explicit confirmation and the normal process,
+  stale hash, verified backup, atomic replacement, rollback, and readback gates.
+
 ### Profile sharing
 
 1. Export only versioned profile data: display name, managed INI changes, CPU

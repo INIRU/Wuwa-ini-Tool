@@ -559,6 +559,9 @@ running write rejection, stale preview token, arbitrary-path rejection, and
 close-to-tray/explicit-quit state tests. Add a declarative security assertion
 that CSP is non-null and does not allow remote scripts, `unsafe-eval`, broad
 filesystem access, or shell execution.
+Add backend-owned native-dialog import tests for cancellation, filename,
+encoding, NUL/size rejection, and returning candidate text without any write
+or general frontend filesystem permission.
 
 - [ ] **Step 2: Run RED**
 
@@ -636,7 +639,9 @@ write lock, raw-editor accordion, custom profile save/import error, restore
 preview, bilingual switch, theme, close-to-tray copy, loading/empty/error
 states, updater prompt, keyboard navigation, portable profile export, untrusted
 import preview, non-destructive profile-name collision handling, adding a
-non-catalog custom INI entry, and its save/export/import round-trip.
+non-catalog custom INI entry, its save/export/import round-trip, full-document
+paste preview, local Engine.ini import, destructive replacement warning, and
+an explicit apply that still uses the current preview token.
 
 - [ ] **Step 2: Run RED**
 
@@ -656,6 +661,9 @@ previewed and saved under an available user-confirmed name; they are never
 applied automatically. The Engine.ini page provides a structured custom-entry
 row (section, key, value) in addition to the raw accordion editor. Both routes
 use the same preview token, diff, backup, and apply commands.
+The Advanced Editor also accepts full-document paste and a backend-owned local
+file picker. Both populate a replacement candidate and complete diff but never
+write until the user confirms `Backup and Apply`.
 
 - [ ] **Step 4: Run GREEN, typecheck, and production build**
 

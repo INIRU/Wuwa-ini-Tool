@@ -30,6 +30,10 @@ Source design: `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`
 - REQ-INI-007: Edit only the actual `Engine.ini` derived from the validated
   game's `Client` tree; never create or write `UserEngine.ini` or another
   alternate configuration file as a bypass.
+- REQ-INI-008: Accept a user-selected local `Engine.ini` file or a complete
+  pasted document as a full replacement candidate, validate size/encoding/INI
+  safety, show the complete diff and destructive-replacement warning, and use
+  the same game-running, stale-preview, backup, atomic-write, and readback gate.
 
 ## Catalog and Profiles
 
