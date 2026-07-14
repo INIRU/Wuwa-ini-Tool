@@ -11,7 +11,7 @@
       "value_type": "integer",
       "constraints": { "minimum": 50, "maximum": 200, "allowed_values": [] },
       "risk": "medium",
-      "status": "community_reported",
+      "status": "experimental",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scalability-reference-for-unreal-engine",
         "tested_game_version": null,
@@ -30,7 +30,7 @@
       "value_type": "float",
       "constraints": { "minimum": 0.1, "maximum": 10, "allowed_values": [] },
       "risk": "medium",
-      "status": "community_reported",
+      "status": "experimental",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scalability-reference-for-unreal-engine",
         "tested_game_version": null,
@@ -49,7 +49,7 @@
       "value_type": "float",
       "constraints": { "minimum": 0, "maximum": 10, "allowed_values": [] },
       "risk": "low",
-      "status": "community_reported",
+      "status": "experimental",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
         "tested_game_version": null,
@@ -68,7 +68,7 @@
       "value_type": "integer",
       "constraints": { "minimum": 0, "maximum": 4, "allowed_values": [] },
       "risk": "low",
-      "status": "community_reported",
+      "status": "experimental",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
         "tested_game_version": null,
@@ -87,7 +87,7 @@
       "value_type": "integer",
       "constraints": { "minimum": 0, "maximum": 5, "allowed_values": [] },
       "risk": "low",
-      "status": "community_reported",
+      "status": "experimental",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
         "tested_game_version": null,
@@ -106,7 +106,7 @@
       "value_type": "integer",
       "constraints": { "minimum": 0, "maximum": 16, "allowed_values": [] },
       "risk": "low",
-      "status": "community_reported",
+      "status": "experimental",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
         "tested_game_version": null,

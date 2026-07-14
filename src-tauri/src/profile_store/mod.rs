@@ -12,6 +12,7 @@ use std::{
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::catalog::Catalog;
+use crate::ini_document::ManagedChange;
 
 pub use error::ProfileError;
 pub use model::{
@@ -30,6 +31,30 @@ const MAX_VALUE_CHARS: usize = 8192;
 const MAX_NAME_CHARS: usize = 80;
 const MAX_APP_VERSION_CHARS: usize = 32;
 static PROFILE_LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+impl ProfilePatch {
+    /// Validates every profile field before exposing changes to the INI merge pipeline.
+    pub fn validated_managed_changes(
+        &self,
+        catalog: &Catalog,
+    ) -> Result<Vec<ManagedChange>, ProfileError> {
+        validate_patch(self, catalog)?;
+        let mut changes = self
+            .managed_ini
+            .iter()
+            .map(|change| match &change.value {
+                Some(value) => ManagedChange::set(&change.section, &change.key, value),
+                None => ManagedChange::delete(&change.section, &change.key),
+            })
+            .collect::<Vec<_>>();
+        changes.extend(
+            self.custom_ini_entries
+                .iter()
+                .map(|entry| ManagedChange::set(&entry.section, &entry.key, &entry.value)),
+        );
+        Ok(changes)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ProfileStore {
@@ -423,21 +448,42 @@ fn validate_custom_entry(entry: &CustomIniEntry) -> Result<(), ProfileError> {
         return Err(ProfileError::InvalidProfile("custom_entry_provenance"));
     }
     validate_ini_piece(&entry.section, MAX_SECTION_CHARS, "custom_section")?;
-    if entry.section.trim() != entry.section {
+    if trim_ascii(&entry.section) != entry.section {
         return Err(ProfileError::InvalidProfile("custom_section_whitespace"));
     }
     if entry.section.contains(['[', ']']) {
         return Err(ProfileError::InvalidProfile("custom_section_delimiter"));
     }
     validate_ini_piece(&entry.key, MAX_KEY_CHARS, "custom_key")?;
-    if entry.key.trim() != entry.key {
+    if trim_ascii(&entry.key) != entry.key {
         return Err(ProfileError::InvalidProfile("custom_key_whitespace"));
+    }
+    if entry.key.starts_with([';', '#']) {
+        return Err(ProfileError::InvalidProfile("custom_key_comment"));
     }
     if entry.key.contains('=') {
         return Err(ProfileError::InvalidProfile("custom_key_delimiter"));
     }
     validate_ini_piece(&entry.value, MAX_VALUE_CHARS, "custom_value")?;
+    if trim_ascii(&entry.value) != entry.value {
+        return Err(ProfileError::InvalidProfile("custom_value_whitespace"));
+    }
+    if entry.value.starts_with([';', '#']) {
+        return Err(ProfileError::InvalidProfile("custom_value_comment"));
+    }
+    if entry
+        .value
+        .as_bytes()
+        .windows(2)
+        .any(|pair| pair[0].is_ascii_whitespace() && matches!(pair[1], b';' | b'#'))
+    {
+        return Err(ProfileError::InvalidProfile("custom_value_inline_comment"));
+    }
     Ok(())
+}
+
+fn trim_ascii(value: &str) -> &str {
+    value.trim_matches(|character: char| character.is_ascii_whitespace())
 }
 
 fn validate_ini_piece(

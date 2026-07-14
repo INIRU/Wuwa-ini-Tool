@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::ProfileIniChange;
-use crate::ini_document::ManagedChange;
 
 pub const PROFILE_SCHEMA_VERSION: u32 = 1;
 pub const SHARE_SCHEMA_VERSION: u32 = 1;
@@ -64,25 +63,6 @@ pub struct ProfilePatch {
     pub managed_ini: Vec<ProfileIniChange>,
     pub custom_ini_entries: Vec<CustomIniEntry>,
     pub process: ProcessProfile,
-}
-
-impl ProfilePatch {
-    pub fn managed_changes(&self) -> Vec<ManagedChange> {
-        let mut changes = self
-            .managed_ini
-            .iter()
-            .map(|change| match &change.value {
-                Some(value) => ManagedChange::set(&change.section, &change.key, value),
-                None => ManagedChange::delete(&change.section, &change.key),
-            })
-            .collect::<Vec<_>>();
-        changes.extend(
-            self.custom_ini_entries
-                .iter()
-                .map(|entry| ManagedChange::set(&entry.section, &entry.key, &entry.value)),
-        );
-        changes
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

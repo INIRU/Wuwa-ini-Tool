@@ -346,6 +346,13 @@ fn cpu_selections_and_all_priority_classes_round_trip_without_engine_ini_keys() 
 
 #[test]
 fn profile_patch_converts_managed_ini_entries_without_mixing_process_settings() {
+    let known = option("r.Known", OptionStatus::Experimental, false);
+    let removed = option("r.Removed", OptionStatus::Experimental, false);
+    let catalog = Catalog {
+        options: BTreeMap::from([(known.key.clone(), known), (removed.key.clone(), removed)]),
+        presets: Vec::new(),
+        cpu_presets: Vec::new(),
+    };
     let patch = ProfilePatch {
         schema_version: PROFILE_SCHEMA_VERSION,
         managed_ini: vec![
@@ -368,10 +375,72 @@ fn profile_patch_converts_managed_ini_entries_without_mixing_process_settings() 
     };
     let document = IniDocument::parse(b"[SystemSettings]\r\nr.Known=1\r\nr.Removed=1\r\n").unwrap();
 
-    let preview = document.merge(&patch.managed_changes()).unwrap();
+    let changes = patch.validated_managed_changes(&catalog).unwrap();
+    let preview = document.merge(&changes).unwrap();
 
     assert_eq!(preview.after, b"[SystemSettings]\r\nr.Known=2\r\n".to_vec());
     assert_eq!(preview.semantic_changes.len(), 2);
+}
+
+#[test]
+fn unsaved_profile_patches_cannot_bypass_full_managed_change_validation() {
+    let catalog = Catalog::load_embedded().unwrap();
+    let valid = profile("candidate", "Candidate", "r.ScreenPercentage").patch;
+    assert_eq!(
+        valid.validated_managed_changes(&catalog).unwrap(),
+        vec![wuwa_ini_tool_lib::ini_document::ManagedChange::set(
+            "SystemSettings",
+            "r.ScreenPercentage",
+            "100",
+        )]
+    );
+
+    let mut unknown = valid.clone();
+    unknown.managed_ini[0].key = "r.Unknown".into();
+    assert!(matches!(
+        unknown.validated_managed_changes(&catalog),
+        Err(ProfileError::UnknownProfileKey(key)) if key == "r.Unknown"
+    ));
+
+    let mut out_of_range = valid.clone();
+    out_of_range.managed_ini[0].value = Some("999".into());
+    assert!(matches!(
+        out_of_range.validated_managed_changes(&catalog),
+        Err(ProfileError::InvalidProfile("invalid_option_value"))
+    ));
+
+    let mut injected = valid.clone();
+    injected.managed_ini[0].value = Some("100\nr.Injected=1".into());
+    assert!(matches!(
+        injected.validated_managed_changes(&catalog),
+        Err(ProfileError::InvalidProfile("invalid_option_value"))
+    ));
+
+    let mut spoofed = valid;
+    let mut custom = custom_entry("SystemSettings", "r.Custom", "1");
+    custom.runtime_verified = true;
+    spoofed.custom_ini_entries.push(custom);
+    assert!(matches!(
+        spoofed.validated_managed_changes(&catalog),
+        Err(ProfileError::InvalidProfile("custom_entry_provenance"))
+    ));
+
+    let invalid_provenance = serde_json::json!({
+        "schema_version": PROFILE_SCHEMA_VERSION,
+        "managed_ini": [],
+        "custom_ini_entries": [{
+            "section": "SystemSettings",
+            "key": "r.Custom",
+            "value": "1",
+            "provenance": "catalog",
+            "runtime_verified": false
+        }],
+        "process": {
+            "cpu_selection": {"mode": "all"},
+            "priority": "normal"
+        }
+    });
+    assert!(serde_json::from_value::<ProfilePatch>(invalid_provenance).is_err());
 }
 
 #[test]
@@ -526,7 +595,8 @@ fn custom_ini_entries_round_trip_and_merge_as_unverified_ini_data() {
     assert!(!loaded.patch.custom_ini_entries[0].runtime_verified);
 
     let document = IniDocument::parse(b"[SystemSettings]\r\nr.ScreenPercentage=100\r\n").unwrap();
-    let preview = document.merge(&loaded.patch.managed_changes()).unwrap();
+    let changes = loaded.patch.validated_managed_changes(&catalog).unwrap();
+    let preview = document.merge(&changes).unwrap();
     let rendered = String::from_utf8(preview.after).unwrap();
     assert!(rendered.contains("r.IniruFPSOpti=1"));
 }
@@ -544,8 +614,20 @@ fn custom_ini_syntax_and_case_insensitive_duplicates_are_rejected() {
         custom_entry("System", "", "1"),
         custom_entry("System", "   ", "1"),
         custom_entry("System", "r.Key=2", "1"),
+        custom_entry(" System", "r.Key", "1"),
+        custom_entry("System ", "r.Key", "1"),
+        custom_entry("System", " r.Key", "1"),
+        custom_entry("System", "r.Key ", "1"),
+        custom_entry("System", ";r.Key", "1"),
+        custom_entry("System", "#r.Key", "1"),
         custom_entry("System", "r.Key\0", "1"),
         custom_entry("System", "r.Key", "one\ntwo"),
+        custom_entry("System", "r.Key", " value"),
+        custom_entry("System", "r.Key", "value "),
+        custom_entry("System", "r.Key", ";comment"),
+        custom_entry("System", "r.Key", "#comment"),
+        custom_entry("System", "r.Key", "value ;comment"),
+        custom_entry("System", "r.Key", "value #comment"),
     ];
     for (index, entry) in invalid.into_iter().enumerate() {
         let mut candidate = profile(&format!("invalid-{index}"), "Invalid", "r.ScreenPercentage");
@@ -565,6 +647,56 @@ fn custom_ini_syntax_and_case_insensitive_duplicates_are_rejected() {
         store.save(&duplicate, &catalog),
         Err(ProfileError::InvalidProfile(_))
     ));
+}
+
+#[test]
+fn validated_custom_changes_are_parser_idempotent_without_overrejecting_punctuation() {
+    let catalog = Catalog::load_embedded().unwrap();
+    let patch = ProfilePatch {
+        schema_version: PROFILE_SCHEMA_VERSION,
+        managed_ini: Vec::new(),
+        custom_ini_entries: vec![
+            custom_entry("SystemSettings", "r.Custom-Name:V2", "alpha;beta#gamma"),
+            custom_entry("ConsoleVariables", "custom.path", "C:/Games/WuWa"),
+        ],
+        process: ProcessProfile::default(),
+    };
+    let changes = patch.validated_managed_changes(&catalog).unwrap();
+    assert_eq!(
+        changes,
+        vec![
+            wuwa_ini_tool_lib::ini_document::ManagedChange::set(
+                "SystemSettings",
+                "r.Custom-Name:V2",
+                "alpha;beta#gamma",
+            ),
+            wuwa_ini_tool_lib::ini_document::ManagedChange::set(
+                "ConsoleVariables",
+                "custom.path",
+                "C:/Games/WuWa",
+            ),
+        ]
+    );
+    let first = IniDocument::parse(b"; preserved\r\n")
+        .unwrap()
+        .merge(&changes)
+        .unwrap();
+    let second = IniDocument::parse(&first.after)
+        .unwrap()
+        .merge(&changes)
+        .unwrap();
+
+    assert_eq!(second.after, first.after);
+    assert!(second.semantic_changes.is_empty());
+}
+
+#[test]
+fn community_reported_catalog_status_requires_non_upstream_community_evidence() {
+    let embedded = Catalog::load_embedded().unwrap();
+    assert!(embedded.options.values().all(|item| {
+        item.status != OptionStatus::CommunityReported
+            || !item.evidence.source_url.contains("dev.epicgames.com")
+    }));
 }
 
 #[test]
