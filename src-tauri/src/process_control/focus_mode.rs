@@ -328,6 +328,7 @@ pub fn background_headroom_cpu_sets(topology: &CpuTopology) -> Option<Vec<u32>> 
 #[serde(deny_unknown_fields)]
 pub struct FocusProcessIdentity {
     pub pid: u32,
+    #[serde(with = "crate::wire::u64_decimal")]
     pub creation_time_100ns: u64,
     pub canonical_image: PathBuf,
 }
@@ -494,6 +495,8 @@ pub enum FocusError {
     SampleTooSoon,
     #[error("focus_telemetry_unavailable")]
     TelemetryUnavailable,
+    #[error("focus_config_failure")]
+    ConfigFailure,
 }
 
 pub trait FocusBackend {
@@ -680,6 +683,37 @@ impl<B: FocusBackend, S: FocusJournalStore> FocusModeController<B, S> {
         self.next_token = self.next_token.saturating_add(1);
         self.latest_preview = Some(preview.clone());
         Ok(preview)
+    }
+
+    pub fn preview_candidate_executable(
+        &self,
+        preview_token: u64,
+        identity: &FocusProcessIdentity,
+    ) -> Result<PathBuf, FocusError> {
+        let preview = self
+            .latest_preview
+            .as_ref()
+            .ok_or(FocusError::PreviewRequired)?;
+        if preview.token != preview_token {
+            return Err(FocusError::StalePreview);
+        }
+        let candidate = preview
+            .candidates
+            .iter()
+            .find(|candidate| identities_match(&candidate.identity, identity))
+            .ok_or(FocusError::InvalidSelection)?;
+        if !super::focus_exclusion_store::valid_executable_path(&candidate.identity.canonical_image)
+        {
+            return Err(FocusError::InvalidSelection);
+        }
+        Ok(candidate.identity.canonical_image.clone())
+    }
+
+    pub fn replace_pinned_executables(&mut self, executables: BTreeSet<PathBuf>) {
+        self.config.pinned_executables = executables;
+        self.latest_preview = None;
+        self.selected.clear();
+        self.select_all_active = false;
     }
 
     pub fn activate(

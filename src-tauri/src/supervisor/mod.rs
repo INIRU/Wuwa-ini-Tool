@@ -1,5 +1,6 @@
 mod events;
 mod focus;
+mod qos;
 mod state;
 mod system;
 
@@ -18,6 +19,10 @@ pub use focus::{
     FocusDecisionSummary, FocusLifecycle, FocusLifecycleReport, FocusLifecycleStatus,
     FocusTelemetrySummary, NoopFocus, PreparedFocusLifecycle,
 };
+pub use qos::{
+    GameQosLifecycle, GameQosLifecycleReport, GameQosLifecycleStatus, NoopGameQos,
+    PreparedGameQosLifecycle,
+};
 pub use state::{CloseAction, SupervisorState};
 pub use system::SystemSupervisorBackend;
 
@@ -25,11 +30,13 @@ const MIN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const EXIT_CONFIRMATION_POLLS: u8 = 2;
 const MAX_PENDING_EVENTS: usize = 128;
+const MAX_PENDING_QOS_REPORTS: usize = 32;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObservedGame {
     pub pid: u32,
+    #[serde(with = "crate::wire::u64_decimal")]
     pub creation_time_100ns: u64,
     pub canonical_image: PathBuf,
 }
@@ -65,6 +72,8 @@ pub enum SupervisorError {
     FocusFailure,
     #[error("validated_game_process_not_active")]
     NotActive,
+    #[error("game_qos_lifecycle_failure")]
+    GameQosFailure,
 }
 
 impl From<MaintenanceError> for SupervisorError {
@@ -91,9 +100,10 @@ pub trait SupervisorBackend {
     ) -> Result<SupervisorRestoreOutcome, SupervisorError>;
 }
 
-pub struct Supervisor<B, F = NoopFocus> {
+pub struct Supervisor<B, F = NoopFocus, Q = NoopGameQos> {
     backend: B,
     focus: F,
+    game_qos: Q,
     installation: GameInstallation,
     profile: ProcessProfile,
     dangerous_priority_acknowledged: bool,
@@ -108,20 +118,21 @@ pub struct Supervisor<B, F = NoopFocus> {
     missing_polls: u8,
     epoch: u64,
     focus_enabled: bool,
+    game_qos_reports: VecDeque<GameQosLifecycleReport>,
 }
 
-impl<B: SupervisorBackend> Supervisor<B, NoopFocus> {
+impl<B: SupervisorBackend> Supervisor<B, NoopFocus, NoopGameQos> {
     pub fn new(
         backend: B,
         installation: GameInstallation,
         profile: ProcessProfile,
         gate: MaintenanceGate,
     ) -> Self {
-        Self::with_focus(backend, NoopFocus, installation, profile, gate)
+        Self::with_focus_and_qos(backend, NoopFocus, NoopGameQos, installation, profile, gate)
     }
 }
 
-impl<B: SupervisorBackend, F: FocusLifecycle> Supervisor<B, F> {
+impl<B: SupervisorBackend, F: FocusLifecycle> Supervisor<B, F, NoopGameQos> {
     pub fn with_focus(
         backend: B,
         focus: F,
@@ -129,9 +140,23 @@ impl<B: SupervisorBackend, F: FocusLifecycle> Supervisor<B, F> {
         profile: ProcessProfile,
         gate: MaintenanceGate,
     ) -> Self {
+        Self::with_focus_and_qos(backend, focus, NoopGameQos, installation, profile, gate)
+    }
+}
+
+impl<B: SupervisorBackend, F: FocusLifecycle, Q: GameQosLifecycle> Supervisor<B, F, Q> {
+    pub fn with_focus_and_qos(
+        backend: B,
+        focus: F,
+        game_qos: Q,
+        installation: GameInstallation,
+        profile: ProcessProfile,
+        gate: MaintenanceGate,
+    ) -> Self {
         Self {
             backend,
             focus,
+            game_qos,
             installation,
             profile,
             dangerous_priority_acknowledged: false,
@@ -146,6 +171,7 @@ impl<B: SupervisorBackend, F: FocusLifecycle> Supervisor<B, F> {
             missing_polls: 0,
             epoch: 0,
             focus_enabled: false,
+            game_qos_reports: VecDeque::new(),
         }
     }
 
@@ -303,6 +329,18 @@ impl<B: SupervisorBackend, F: FocusLifecycle> Supervisor<B, F> {
         &mut self.focus
     }
 
+    pub fn game_qos(&self) -> &Q {
+        &self.game_qos
+    }
+
+    pub fn game_qos_mut(&mut self) -> &mut Q {
+        &mut self.game_qos
+    }
+
+    pub fn drain_game_qos_reports(&mut self) -> Vec<GameQosLifecycleReport> {
+        self.game_qos_reports.drain(..).collect()
+    }
+
     pub const fn epoch(&self) -> u64 {
         self.epoch
     }
@@ -353,6 +391,26 @@ impl<B: SupervisorBackend, F: FocusLifecycle> Supervisor<B, F> {
         let report = self.focus.restore(&process, self.epoch)?;
         self.focus_enabled = report.recovery_required;
         self.emit_focus_report(report.clone());
+        Ok(report)
+    }
+
+    pub fn normalize_game_qos(
+        &mut self,
+        request: crate::process_control::GameQosRequest,
+    ) -> Result<GameQosLifecycleReport, SupervisorError> {
+        if !matches!(
+            self.state,
+            SupervisorState::Active | SupervisorState::Partial | SupervisorState::Denied
+        ) {
+            return Err(SupervisorError::NotActive);
+        }
+        let process = self
+            .active_process
+            .as_ref()
+            .ok_or(SupervisorError::NotActive)?
+            .clone();
+        let report = self.game_qos.normalize(&process, request)?;
+        self.push_game_qos_report(report.clone());
         Ok(report)
     }
 
@@ -429,6 +487,10 @@ impl<B: SupervisorBackend, F: FocusLifecycle> Supervisor<B, F> {
         let Some(process) = self.active_process.as_ref().cloned() else {
             return Ok(());
         };
+        let qos_report = self.game_qos.restore(&process)?;
+        if qos_report.status != GameQosLifecycleStatus::NoChange {
+            self.push_game_qos_report(qos_report);
+        }
         if self.focus_enabled {
             let report = self.focus.restore(&process, self.epoch)?;
             let recovery_required = report.recovery_required;
@@ -469,6 +531,13 @@ impl<B: SupervisorBackend, F: FocusLifecycle> Supervisor<B, F> {
             reason: SupervisorEventReason::FocusChanged,
             focus_report: Some(report),
         });
+    }
+
+    fn push_game_qos_report(&mut self, report: GameQosLifecycleReport) {
+        if self.game_qos_reports.len() == MAX_PENDING_QOS_REPORTS {
+            self.game_qos_reports.pop_front();
+        }
+        self.game_qos_reports.push_back(report);
     }
 
     fn reset_polling(&mut self) {

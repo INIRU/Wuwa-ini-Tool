@@ -12,14 +12,15 @@ use wuwa_ini_tool_lib::{
         CpuTopology, FileFocusJournalStore, FocusActivationRequest, FocusAdaptiveAction,
         FocusBackend, FocusConfig, FocusError, FocusJournal, FocusJournalEntry, FocusJournalStore,
         FocusModeController, FocusProcessIdentity, FocusProcessLoad, FocusProcessSnapshot,
-        FocusRestoreOutcome, FocusRuntimeAvailability, FocusTelemetrySample, PriorityClass,
-        FOCUS_JOURNAL_SCHEMA_VERSION,
+        FocusRestoreOutcome, FocusRuntimeAvailability, FocusTelemetrySample, GameQosRequest,
+        PriorityClass, FOCUS_JOURNAL_SCHEMA_VERSION,
     },
     profile_store::ProcessProfile,
     supervisor::{
-        CloseAction, FocusLifecycle, FocusLifecycleReport, FocusLifecycleStatus, ObservedGame,
-        PreparedFocusLifecycle, Supervisor, SupervisorApplyOutcome, SupervisorBackend,
-        SupervisorError, SupervisorRestoreOutcome, SupervisorState,
+        CloseAction, FocusLifecycle, FocusLifecycleReport, FocusLifecycleStatus, GameQosLifecycle,
+        GameQosLifecycleReport, GameQosLifecycleStatus, ObservedGame, PreparedFocusLifecycle,
+        Supervisor, SupervisorApplyOutcome, SupervisorBackend, SupervisorError,
+        SupervisorRestoreOutcome, SupervisorState,
     },
 };
 
@@ -113,6 +114,49 @@ struct FakeFocus {
     calls: Vec<(&'static str, u32, u64)>,
 }
 
+#[derive(Default)]
+struct FakeGameQos {
+    calls: Vec<(&'static str, u32)>,
+}
+
+impl GameQosLifecycle for FakeGameQos {
+    fn recover(&mut self) -> Result<GameQosLifecycleReport, SupervisorError> {
+        self.calls.push(("recover", 0));
+        Ok(GameQosLifecycleReport::no_change())
+    }
+
+    fn normalize(
+        &mut self,
+        process: &ObservedGame,
+        _request: GameQosRequest,
+    ) -> Result<GameQosLifecycleReport, SupervisorError> {
+        self.calls.push(("normalize", process.pid));
+        Ok(GameQosLifecycleReport {
+            status: GameQosLifecycleStatus::Applied,
+            prior: Some(wuwa_ini_tool_lib::process_control::GameQosState {
+                execution_speed_throttled: true,
+            }),
+            applied: Some(wuwa_ini_tool_lib::process_control::GameQosState {
+                execution_speed_throttled: false,
+            }),
+            restore_pending: true,
+        })
+    }
+
+    fn restore(
+        &mut self,
+        process: &ObservedGame,
+    ) -> Result<GameQosLifecycleReport, SupervisorError> {
+        self.calls.push(("restore", process.pid));
+        Ok(GameQosLifecycleReport {
+            status: GameQosLifecycleStatus::Restored,
+            prior: None,
+            applied: None,
+            restore_pending: false,
+        })
+    }
+}
+
 impl FocusLifecycle for FakeFocus {
     fn recover(&mut self) -> Result<FocusLifecycleReport, SupervisorError> {
         self.calls.push(("recover", 0, 0));
@@ -171,6 +215,22 @@ fn observed(installation: &GameInstallation, pid: u32, creation: u64) -> Observe
         creation_time_100ns: creation,
         canonical_image: installation.executable.clone(),
     }
+}
+
+#[test]
+fn observed_game_creation_time_uses_a_lossless_wire_string() {
+    let (_temp, installation) = installation();
+    let game = observed(&installation, 42, u64::MAX);
+    let encoded = serde_json::to_value(&game).unwrap();
+
+    assert_eq!(
+        encoded["creation_time_100ns"],
+        serde_json::Value::String(u64::MAX.to_string())
+    );
+    assert_eq!(
+        serde_json::from_value::<ObservedGame>(encoded).unwrap(),
+        game
+    );
 }
 
 fn supervisor(backend: FakeBackend, installation: GameInstallation) -> Supervisor<FakeBackend> {
@@ -286,6 +346,80 @@ fn game_exit_and_explicit_quit_restore_exactly_once() {
     supervisor.request_quit().unwrap();
     supervisor.request_quit().unwrap();
     assert_eq!(supervisor.backend().restore_calls, vec![42]);
+}
+
+#[test]
+fn explicit_game_qos_normalization_is_restored_by_supervisor_quit() {
+    let (_temp, installation) = installation();
+    let process = observed(&installation, 42, 100);
+    let mut backend = FakeBackend::default();
+    backend.observations.push_back(Some(process));
+    let mut supervisor = Supervisor::with_focus_and_qos(
+        backend,
+        FakeFocus::default(),
+        FakeGameQos::default(),
+        installation,
+        ProcessProfile::default(),
+        MaintenanceGate::new(),
+    );
+    supervisor.tick().unwrap();
+    supervisor.tick().unwrap();
+
+    let report = supervisor
+        .normalize_game_qos(GameQosRequest {
+            disable_execution_speed_throttling: true,
+        })
+        .unwrap();
+    assert_eq!(report.status, GameQosLifecycleStatus::Applied);
+    assert!(report.restore_pending);
+    supervisor.request_quit().unwrap();
+    assert_eq!(
+        supervisor.game_qos().calls,
+        vec![("normalize", 42), ("restore", 42)]
+    );
+    assert_eq!(
+        supervisor
+            .drain_game_qos_reports()
+            .into_iter()
+            .map(|report| report.status)
+            .collect::<Vec<_>>(),
+        vec![
+            GameQosLifecycleStatus::Applied,
+            GameQosLifecycleStatus::Restored
+        ]
+    );
+}
+
+#[test]
+fn explicit_game_qos_normalization_remains_available_after_process_settings_are_denied() {
+    let (_temp, installation) = installation();
+    let process = observed(&installation, 42, 100);
+    let mut backend = FakeBackend::default();
+    backend.observations.push_back(Some(process));
+    backend
+        .apply_outcomes
+        .push_back(SupervisorApplyOutcome::Denied);
+    let mut supervisor = Supervisor::with_focus_and_qos(
+        backend,
+        FakeFocus::default(),
+        FakeGameQos::default(),
+        installation,
+        ProcessProfile::default(),
+        MaintenanceGate::new(),
+    );
+    supervisor.tick().unwrap();
+    supervisor.tick().unwrap();
+    assert_eq!(supervisor.state(), SupervisorState::Denied);
+
+    assert_eq!(
+        supervisor
+            .normalize_game_qos(GameQosRequest {
+                disable_execution_speed_throttling: true,
+            })
+            .unwrap()
+            .status,
+        GameQosLifecycleStatus::Applied
+    );
 }
 
 #[test]

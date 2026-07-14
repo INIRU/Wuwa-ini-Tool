@@ -45,6 +45,7 @@ pub enum CpuSelection {
     },
     HardAffinity {
         group: u16,
+        #[serde(with = "crate::wire::u64_decimal")]
         mask: u64,
     },
 }

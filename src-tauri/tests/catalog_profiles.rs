@@ -320,6 +320,11 @@ fn schemas_are_valid_json_and_reject_unknown_safety_fields() {
         .unwrap()
         .iter()
         .any(|field| field == "custom_ini_entries"));
+    assert_eq!(
+        profile_schema["$defs"]["cpu_selection"]["oneOf"][3]["properties"]["mask"]["anyOf"][0]
+            ["type"],
+        "string"
+    );
 
     let json = serde_json::json!({
         "schema_version": PROFILE_SCHEMA_VERSION,
@@ -374,6 +379,54 @@ fn cpu_selections_and_all_priority_classes_round_trip_without_engine_ini_keys() 
             );
         }
     }
+}
+
+#[test]
+fn hard_affinity_masks_use_lossless_decimal_strings_and_migrate_only_safe_legacy_numbers() {
+    let maximum = ProcessProfile {
+        cpu_selection: CpuSelection::HardAffinity {
+            group: 0,
+            mask: u64::MAX,
+        },
+        priority: PriorityClass::Normal,
+    };
+    let encoded = serde_json::to_value(&maximum).unwrap();
+    assert_eq!(
+        encoded["cpu_selection"]["mask"],
+        serde_json::Value::String(u64::MAX.to_string())
+    );
+    assert_eq!(
+        serde_json::from_value::<ProcessProfile>(encoded).unwrap(),
+        maximum
+    );
+
+    let legacy_safe = serde_json::json!({
+        "cpu_selection": {
+            "mode": "hard_affinity",
+            "group": 0,
+            "mask": 9_007_199_254_740_991_u64
+        },
+        "priority": "normal"
+    });
+    assert_eq!(
+        serde_json::from_value::<ProcessProfile>(legacy_safe)
+            .unwrap()
+            .cpu_selection,
+        CpuSelection::HardAffinity {
+            group: 0,
+            mask: 9_007_199_254_740_991
+        }
+    );
+
+    let legacy_unsafe = serde_json::json!({
+        "cpu_selection": {
+            "mode": "hard_affinity",
+            "group": 0,
+            "mask": 9_007_199_254_740_992_u64
+        },
+        "priority": "normal"
+    });
+    assert!(serde_json::from_value::<ProcessProfile>(legacy_unsafe).is_err());
 }
 
 #[test]

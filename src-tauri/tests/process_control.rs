@@ -37,6 +37,17 @@ fn topology(sets: Vec<CpuSetInfo>, groups: &[(u16, u64)]) -> CpuTopology {
 }
 
 #[test]
+fn topology_active_masks_cross_json_as_lossless_decimal_strings() {
+    let topology = topology(Vec::new(), &[(0, u64::MAX)]);
+    let encoded = serde_json::to_value(topology).unwrap();
+
+    assert_eq!(
+        encoded["groups"][0]["active_mask"],
+        serde_json::Value::String(u64::MAX.to_string())
+    );
+}
+
+#[test]
 fn every_priority_round_trips_without_changing_the_default() {
     let expected = [
         (PriorityClass::Idle, "idle", 0x0000_0040),

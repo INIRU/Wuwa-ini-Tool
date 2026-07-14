@@ -8,6 +8,7 @@ pub mod maintenance;
 pub mod process_control;
 pub mod profile_store;
 pub mod supervisor;
+mod wire;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
@@ -90,10 +91,8 @@ pub fn run() -> Result<(), RunError> {
                     return;
                 };
                 let state = updater_app.state::<commands::RuntimeState>();
-                let version = update.version.clone();
-                if state.set_pending_update(update).is_ok() {
-                    let _ = updater_app
-                        .emit("update://available", commands::UpdateAvailable { version });
+                if let Ok(metadata) = state.set_pending_update(update) {
+                    let _ = updater_app.emit("update://available", metadata);
                 }
             });
             Ok(())
@@ -118,7 +117,9 @@ pub fn run() -> Result<(), RunError> {
             commands::launch_game,
             commands::get_cpu_topology,
             commands::apply_process_settings,
+            commands::normalize_game_qos,
             commands::preview_focus_mode,
+            commands::set_focus_exclusion,
             commands::activate_focus_mode,
             commands::deactivate_focus_mode,
             commands::preview_cache_cleanup,
@@ -130,6 +131,7 @@ pub fn run() -> Result<(), RunError> {
             commands::list_backups,
             commands::pin_backup,
             commands::install_update,
+            commands::get_pending_update,
             commands::external::open_external_link,
         ])
         .run(tauri::generate_context!())
@@ -174,7 +176,9 @@ mod tests {
                 crate::commands::launch_game,
                 crate::commands::get_cpu_topology,
                 crate::commands::apply_process_settings,
+                crate::commands::normalize_game_qos,
                 crate::commands::preview_focus_mode,
+                crate::commands::set_focus_exclusion,
                 crate::commands::activate_focus_mode,
                 crate::commands::deactivate_focus_mode,
                 crate::commands::preview_cache_cleanup,
@@ -186,6 +190,7 @@ mod tests {
                 crate::commands::list_backups,
                 crate::commands::pin_backup,
                 crate::commands::install_update,
+                crate::commands::get_pending_update,
                 crate::commands::external::open_external_link,
             ]);
     }

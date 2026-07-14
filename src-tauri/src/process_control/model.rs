@@ -27,6 +27,7 @@ pub struct CpuSetInfo {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProcessorGroup {
     pub group: u16,
+    #[serde(serialize_with = "crate::wire::u64_decimal::serialize")]
     pub active_mask: u64,
 }
 
@@ -197,6 +198,7 @@ pub enum GameQosRestoreGuard {
 #[serde(rename_all = "snake_case")]
 pub enum GameQosRestoreOutcome {
     Restored,
+    Exited,
     IdentityChanged,
     ExternallyChanged,
 }

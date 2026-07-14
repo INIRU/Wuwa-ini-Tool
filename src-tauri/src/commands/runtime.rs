@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::Update;
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use crate::{
@@ -27,17 +28,19 @@ use crate::{
     ini_document::ManagedChange,
     maintenance::{MaintenanceGate, MaintenanceGuard, MaintenanceOperation},
     process_control::{
-        ApplyReport, ApplyRequest, CpuTopology, FileFocusJournalStore, FocusActivationRequest,
-        FocusCandidate, FocusConfig, FocusModeController, FocusRuntimeAvailability,
-        FocusThresholds, ProcessController, ProcessTarget, SystemFocusBackend,
+        ApplyReport, ApplyRequest, CpuTopology, FileFocusExclusionStore, FileFocusJournalStore,
+        FocusActivationRequest, FocusCandidate, FocusConfig, FocusExclusionStore,
+        FocusModeController, FocusProcessIdentity, FocusRuntimeAvailability, FocusThresholds,
+        GameQosRequest, GameQosState, ProcessController, ProcessTarget, SystemFocusBackend,
     },
     profile_store::{
         CpuSelection, CustomProfile, ImportPreview, PriorityClass, ProcessProfile, ProfileStore,
         MAX_SHARE_BYTES,
     },
     supervisor::{
-        FocusLifecycle, FocusLifecycleReport, PreparedFocusLifecycle, Supervisor, SupervisorEvent,
-        SupervisorState, SystemSupervisorBackend,
+        FocusLifecycle, FocusLifecycleReport, GameQosLifecycle, GameQosLifecycleReport,
+        GameQosLifecycleStatus, PreparedFocusLifecycle, PreparedGameQosLifecycle, Supervisor,
+        SupervisorEvent, SupervisorState, SystemSupervisorBackend,
     },
 };
 
@@ -47,7 +50,8 @@ use super::{
 };
 
 type RuntimeFocus = PreparedFocusLifecycle<SystemFocusBackend, FileFocusJournalStore>;
-type RuntimeSupervisor = Supervisor<SystemSupervisorBackend, RuntimeFocus>;
+type RuntimeGameQos = PreparedGameQosLifecycle<crate::process_control::FileGameQosJournalStore>;
+type RuntimeSupervisor = Supervisor<SystemSupervisorBackend, RuntimeFocus, RuntimeGameQos>;
 const TOKEN_LIFETIME: Duration = Duration::from_secs(5 * 60);
 const MAX_PENDING_TOKENS: usize = 32;
 
@@ -70,11 +74,12 @@ struct StoredRestoreSource {
     created_at: Instant,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct StoredFocusPreview {
     generation: u64,
     epoch: u64,
     controller_token: u64,
+    candidates: Vec<FocusCandidate>,
     created_at: Instant,
 }
 
@@ -95,6 +100,7 @@ pub struct RuntimeState {
     pending_update: Mutex<Option<Update>>,
     shutdown_guard: Mutex<Option<MaintenanceGuard>>,
     pending_focus_reports: Mutex<Vec<FocusLifecycleReport>>,
+    pending_qos_reports: Mutex<Vec<GameQosLifecycleReport>>,
     focus_previews: Mutex<HashMap<Uuid, StoredFocusPreview>>,
 }
 
@@ -117,6 +123,7 @@ impl RuntimeState {
             pending_update: Mutex::new(None),
             shutdown_guard: Mutex::new(None),
             pending_focus_reports: Mutex::new(Vec::new()),
+            pending_qos_reports: Mutex::new(Vec::new()),
             focus_previews: Mutex::new(HashMap::new()),
         }
     }
@@ -151,11 +158,15 @@ impl RuntimeState {
         .map_err(|_| ClientError::new("cache_service_unavailable"))?;
         let focus_backend = SystemFocusBackend::new(&validated)
             .map_err(|_| ClientError::new("focus_mode_unavailable"))?;
+        let pinned_executables = FileFocusExclusionStore::new(self.app_data.clone())
+            .load()
+            .map_err(|_| ClientError::new("focus_config_unavailable"))?;
         let mut focus = PreparedFocusLifecycle::new(FocusModeController::new(
             focus_backend,
             FileFocusJournalStore::new(self.app_data.clone()),
             FocusConfig {
                 enabled: true,
+                pinned_executables,
                 ..FocusConfig::default()
             },
         ));
@@ -171,9 +182,15 @@ impl RuntimeState {
         let recovery = focus
             .recover()
             .map_err(|_| ClientError::new("focus_recovery_failed"))?;
-        let supervisor = Supervisor::with_focus(
+        let mut game_qos =
+            PreparedGameQosLifecycle::for_app_data(validated.clone(), self.app_data.clone());
+        let qos_recovery = game_qos
+            .recover()
+            .map_err(|_| ClientError::new("game_qos_recovery_failed"))?;
+        let supervisor = Supervisor::with_focus_and_qos(
             SystemSupervisorBackend::new(validated.clone()),
             focus,
+            game_qos,
             validated.clone(),
             ProcessProfile::default(),
             self.gate.clone(),
@@ -214,6 +231,16 @@ impl RuntimeState {
                 reports.remove(0);
             }
             reports.push(recovery);
+        }
+        if qos_recovery.status != GameQosLifecycleStatus::NoChange {
+            let mut qos_reports = self
+                .pending_qos_reports
+                .lock()
+                .map_err(|_| ClientError::new("state_unavailable"))?;
+            if qos_reports.len() == MAX_PENDING_TOKENS {
+                qos_reports.remove(0);
+            }
+            qos_reports.push(qos_recovery);
         }
         Ok(())
     }
@@ -308,12 +335,17 @@ impl RuntimeState {
         Ok(())
     }
 
-    pub fn set_pending_update(&self, update: Update) -> Result<(), ClientError> {
+    pub fn set_pending_update(&self, update: Update) -> Result<UpdateAvailable, ClientError> {
+        let metadata = update_available_metadata(
+            update.version.clone(),
+            update.body.clone(),
+            update.date.and_then(|date| date.format(&Rfc3339).ok()),
+        );
         *self
             .pending_update
             .lock()
             .map_err(|_| ClientError::new("state_unavailable"))? = Some(update);
-        Ok(())
+        Ok(metadata)
     }
 
     fn claim_polling(&self) -> Option<u64> {
@@ -378,6 +410,7 @@ pub struct AppSnapshot {
     pub supervisor_state: SupervisorState,
     pub active_process: Option<crate::supervisor::ObservedGame>,
     pub focus_runtime_availability: Option<FocusRuntimeAvailability>,
+    pub focus_pinned_executables: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -423,6 +456,43 @@ pub struct FocusActivationCommand {
     pub select_all_confirmed: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FocusExclusionCommand {
+    pub token: Uuid,
+    pub candidate: FocusProcessIdentity,
+    pub excluded: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct FocusExclusionStatus {
+    pub executable: PathBuf,
+    pub excluded: bool,
+    pub pinned_executables: Vec<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GameQosNormalizationCommand {
+    pub disable_execution_speed_throttling: bool,
+    pub confirmed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GameQosNormalizationStatus {
+    NoChange,
+    Applied,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct GameQosNormalizationReport {
+    pub status: GameQosNormalizationStatus,
+    pub prior: GameQosState,
+    pub applied: GameQosState,
+    pub restore_pending: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct BackupSummary {
     pub id: String,
@@ -444,9 +514,55 @@ pub struct SupervisorRuntimeError {
     pub code: &'static str,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct UpdateAvailable {
     pub version: String,
+    pub notes: Option<String>,
+    pub published_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct UpdateDownloadProgress {
+    pub downloaded: String,
+    pub total: Option<String>,
+}
+
+fn update_download_progress(downloaded: u64, total: Option<u64>) -> UpdateDownloadProgress {
+    UpdateDownloadProgress {
+        downloaded: downloaded.to_string(),
+        total: total.map(|value| value.to_string()),
+    }
+}
+
+fn update_available_metadata(
+    version: String,
+    notes: Option<String>,
+    published_at: Option<String>,
+) -> UpdateAvailable {
+    UpdateAvailable {
+        version,
+        notes,
+        published_at,
+    }
+}
+
+#[tauri::command]
+pub fn get_pending_update(
+    state: State<'_, RuntimeState>,
+) -> Result<Option<UpdateAvailable>, ClientError> {
+    let update = state
+        .pending_update
+        .lock()
+        .map_err(|_| ClientError::new("state_unavailable"))?
+        .as_ref()
+        .map(|update| {
+            update_available_metadata(
+                update.version.clone(),
+                update.body.clone(),
+                update.date.and_then(|date| date.format(&Rfc3339).ok()),
+            )
+        });
+    Ok(update)
 }
 
 #[tauri::command]
@@ -460,6 +576,19 @@ pub fn get_app_snapshot(state: State<'_, RuntimeState>) -> Result<AppSnapshot, C
         .lock()
         .map_err(|_| ClientError::new("state_unavailable"))?
         .clone();
+    let focus_pinned_executables = supervisor
+        .as_ref()
+        .map(|supervisor| {
+            supervisor
+                .focus()
+                .controller()
+                .config()
+                .pinned_executables
+                .iter()
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(AppSnapshot {
         version: env!("CARGO_PKG_VERSION"),
         installation,
@@ -472,6 +601,7 @@ pub fn get_app_snapshot(state: State<'_, RuntimeState>) -> Result<AppSnapshot, C
         focus_runtime_availability: supervisor
             .as_ref()
             .map(|supervisor| supervisor.focus().runtime_availability()),
+        focus_pinned_executables,
     })
 }
 
@@ -797,6 +927,18 @@ fn start_supervisor_polling(app: AppHandle, state: &RuntimeState) {
                     let _ = app.emit("focus://report", report);
                 }
             }
+            if let Ok(mut reports) = state.pending_qos_reports.lock() {
+                for report in reports.drain(..) {
+                    let _ = app.emit("qos://report", report);
+                }
+            }
+            if let Ok(mut supervisor) = state.supervisor.lock() {
+                if let Some(supervisor) = supervisor.as_mut() {
+                    for report in supervisor.drain_game_qos_reports() {
+                        let _ = app.emit("qos://report", report);
+                    }
+                }
+            }
             if error.is_some() {
                 let _ = app.emit(
                     "supervisor://error",
@@ -875,6 +1017,59 @@ pub fn apply_process_settings(
     Ok(report)
 }
 
+fn validate_game_qos_command(
+    request: GameQosNormalizationCommand,
+) -> Result<GameQosRequest, ClientError> {
+    if !request.disable_execution_speed_throttling {
+        return Err(ClientError::new("game_qos_opt_in_required"));
+    }
+    if !request.confirmed {
+        return Err(ClientError::new("game_qos_confirmation_required"));
+    }
+    Ok(GameQosRequest {
+        disable_execution_speed_throttling: true,
+    })
+}
+
+#[tauri::command]
+pub fn normalize_game_qos(
+    state: State<'_, RuntimeState>,
+    request: GameQosNormalizationCommand,
+) -> Result<GameQosNormalizationReport, ClientError> {
+    let request = validate_game_qos_command(request)?;
+    let report = state
+        .supervisor
+        .lock()
+        .map_err(|_| ClientError::new("state_unavailable"))?
+        .as_mut()
+        .ok_or(ClientError::new("game_not_configured"))?
+        .normalize_game_qos(request)
+        .map_err(|error| match error {
+            crate::supervisor::SupervisorError::NotActive => ClientError::new("game_not_running"),
+            crate::supervisor::SupervisorError::InvalidGameIdentity => {
+                ClientError::new("invalid_game_identity")
+            }
+            _ => ClientError::new("game_qos_normalization_failed"),
+        })?;
+    let prior = report
+        .prior
+        .ok_or(ClientError::new("game_qos_normalization_failed"))?;
+    let applied = report
+        .applied
+        .ok_or(ClientError::new("game_qos_normalization_failed"))?;
+    let status = match report.status {
+        GameQosLifecycleStatus::NoChange => GameQosNormalizationStatus::NoChange,
+        GameQosLifecycleStatus::Applied => GameQosNormalizationStatus::Applied,
+        _ => return Err(ClientError::new("game_qos_normalization_failed")),
+    };
+    Ok(GameQosNormalizationReport {
+        status,
+        prior,
+        applied,
+        restore_pending: report.restore_pending,
+    })
+}
+
 fn should_remember_process_profile(status: crate::process_control::ApplyStatus) -> bool {
     matches!(
         status,
@@ -921,6 +1116,7 @@ pub fn preview_focus_mode(
             generation,
             epoch,
             controller_token: preview.token,
+            candidates: preview.candidates.clone(),
             created_at: Instant::now(),
         },
     );
@@ -955,7 +1151,7 @@ pub fn activate_focus_mode(
             .ok_or(ClientError::new("stale_focus_preview"))?
     };
     let generation = state.configuration_generation.load(Ordering::SeqCst);
-    if !focus_binding_is_current(binding, generation, supervisor.epoch()) {
+    if !focus_binding_is_current(&binding, generation, supervisor.epoch()) {
         return Err(ClientError::new("stale_focus_preview"));
     }
     supervisor.focus_mut().arm(FocusActivationRequest {
@@ -969,10 +1165,81 @@ pub fn activate_focus_mode(
         .map_err(|_| ClientError::new("focus_activation_failed"))
 }
 
-fn focus_binding_is_current(binding: StoredFocusPreview, generation: u64, epoch: u64) -> bool {
+fn focus_binding_is_current(binding: &StoredFocusPreview, generation: u64, epoch: u64) -> bool {
     binding.generation == generation
         && binding.epoch == epoch
         && binding.created_at.elapsed() <= TOKEN_LIFETIME
+}
+
+fn focus_exclusion_candidate(
+    binding: &StoredFocusPreview,
+    generation: u64,
+    epoch: u64,
+    identity: &FocusProcessIdentity,
+) -> Result<PathBuf, ClientError> {
+    if !focus_binding_is_current(binding, generation, epoch) {
+        return Err(ClientError::new("stale_focus_preview"));
+    }
+    binding
+        .candidates
+        .iter()
+        .find(|candidate| candidate.identity == *identity)
+        .map(|candidate| candidate.identity.canonical_image.clone())
+        .ok_or(ClientError::new("invalid_focus_candidate"))
+}
+
+#[tauri::command]
+pub fn set_focus_exclusion(
+    state: State<'_, RuntimeState>,
+    request: FocusExclusionCommand,
+) -> Result<FocusExclusionStatus, ClientError> {
+    let mut supervisor = state
+        .supervisor
+        .lock()
+        .map_err(|_| ClientError::new("state_unavailable"))?;
+    let supervisor = supervisor
+        .as_mut()
+        .ok_or(ClientError::new("game_not_configured"))?;
+    let binding = {
+        let mut previews = state
+            .focus_previews
+            .lock()
+            .map_err(|_| ClientError::new("state_unavailable"))?;
+        previews.retain(|_, preview| preview.created_at.elapsed() <= TOKEN_LIFETIME);
+        previews
+            .remove(&request.token)
+            .ok_or(ClientError::new("stale_focus_preview"))?
+    };
+    let generation = state.configuration_generation.load(Ordering::SeqCst);
+    let executable =
+        focus_exclusion_candidate(&binding, generation, supervisor.epoch(), &request.candidate)?;
+    let controller = supervisor.focus_mut().controller_mut();
+    let resolved = controller
+        .preview_candidate_executable(binding.controller_token, &request.candidate)
+        .map_err(|_| ClientError::new("invalid_focus_candidate"))?;
+    if resolved != executable {
+        return Err(ClientError::new("invalid_focus_candidate"));
+    }
+    let mut pinned = controller.config().pinned_executables.clone();
+    if request.excluded {
+        pinned.insert(executable.clone());
+    } else {
+        pinned.remove(&executable);
+    }
+    FileFocusExclusionStore::new(state.app_data.clone())
+        .save(&pinned)
+        .map_err(|_| ClientError::new("focus_config_save_failed"))?;
+    controller.replace_pinned_executables(pinned.clone());
+    state
+        .focus_previews
+        .lock()
+        .map_err(|_| ClientError::new("state_unavailable"))?
+        .clear();
+    Ok(FocusExclusionStatus {
+        executable,
+        excluded: request.excluded,
+        pinned_executables: pinned.into_iter().collect(),
+    })
 }
 
 #[tauri::command]
@@ -1218,8 +1485,19 @@ pub async fn install_update(
         .clone()
         .ok_or(ClientError::new("update_not_available"))?;
     let _guard = state.prepare_update()?;
+    let progress_app = app.clone();
+    let mut downloaded = 0_u64;
     let bytes = update
-        .download(|_, _| {}, || {})
+        .download(
+            move |chunk_length, content_length| {
+                downloaded = downloaded.saturating_add(chunk_length as u64);
+                let _ = progress_app.emit(
+                    "update://progress",
+                    update_download_progress(downloaded, content_length),
+                );
+            },
+            || {},
+        )
         .await
         .map_err(|_| ClientError::new("update_download_failed"))?;
     state.ensure_game_stopped_for_update()?;
@@ -1247,23 +1525,48 @@ mod tests {
 
     #[test]
     fn focus_preview_binding_rejects_restart_epochs_and_expiry() {
+        let identity = crate::process_control::FocusProcessIdentity {
+            pid: 10,
+            creation_time_100ns: 100,
+            canonical_image: PathBuf::from("/opt/tools/worker.exe"),
+        };
         let current = StoredFocusPreview {
             generation: 3,
             epoch: 7,
             controller_token: 1,
+            candidates: vec![FocusCandidate {
+                identity: identity.clone(),
+                display_name: "worker.exe".to_owned(),
+                current_priority: PriorityClass::Normal,
+                status: crate::process_control::FocusProcessStatus::Eligible,
+            }],
             created_at: Instant::now(),
         };
-        assert!(focus_binding_is_current(current, 3, 7));
-        assert!(!focus_binding_is_current(current, 4, 7));
-        assert!(!focus_binding_is_current(current, 3, 8));
+        assert!(focus_binding_is_current(&current, 3, 7));
+        assert_eq!(
+            focus_exclusion_candidate(&current, 3, 7, &identity),
+            Ok(identity.canonical_image.clone())
+        );
+        assert!(!focus_binding_is_current(&current, 4, 7));
+        assert!(!focus_binding_is_current(&current, 3, 8));
         assert!(!focus_binding_is_current(
-            StoredFocusPreview {
+            &StoredFocusPreview {
                 created_at: Instant::now() - TOKEN_LIFETIME - Duration::from_secs(1),
-                ..current
+                ..current.clone()
             },
             3,
             7
         ));
+        let mut unknown = identity;
+        unknown.pid = 11;
+        assert_eq!(
+            focus_exclusion_candidate(&current, 3, 7, &unknown),
+            Err(ClientError::new("invalid_focus_candidate"))
+        );
+        assert_eq!(
+            focus_exclusion_candidate(&current, 4, 7, &unknown),
+            Err(ClientError::new("stale_focus_preview"))
+        );
     }
 
     #[test]
@@ -1308,6 +1611,56 @@ mod tests {
         assert!(!should_remember_process_profile(
             crate::process_control::ApplyStatus::Denied
         ));
+    }
+
+    #[test]
+    fn game_qos_command_requires_both_explicit_opt_in_and_confirmation() {
+        assert_eq!(
+            validate_game_qos_command(GameQosNormalizationCommand {
+                disable_execution_speed_throttling: false,
+                confirmed: true,
+            }),
+            Err(ClientError::new("game_qos_opt_in_required"))
+        );
+        assert_eq!(
+            validate_game_qos_command(GameQosNormalizationCommand {
+                disable_execution_speed_throttling: true,
+                confirmed: false,
+            }),
+            Err(ClientError::new("game_qos_confirmation_required"))
+        );
+        assert_eq!(
+            validate_game_qos_command(GameQosNormalizationCommand {
+                disable_execution_speed_throttling: true,
+                confirmed: true,
+            }),
+            Ok(GameQosRequest {
+                disable_execution_speed_throttling: true
+            })
+        );
+    }
+
+    #[test]
+    fn pending_update_metadata_keeps_backend_owned_notes_and_publish_time() {
+        assert_eq!(
+            update_available_metadata(
+                "1.1.0".to_owned(),
+                Some("Release notes".to_owned()),
+                Some("2026-07-15T00:00:00Z".to_owned()),
+            ),
+            UpdateAvailable {
+                version: "1.1.0".to_owned(),
+                notes: Some("Release notes".to_owned()),
+                published_at: Some("2026-07-15T00:00:00Z".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn update_progress_uses_lossless_decimal_strings() {
+        let progress = update_download_progress(u64::MAX - 1, Some(u64::MAX));
+        assert_eq!(progress.downloaded, "18446744073709551614");
+        assert_eq!(progress.total.as_deref(), Some("18446744073709551615"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod cpu_set_buffer;
 mod error;
+mod focus_exclusion_store;
 mod focus_mode;
 mod focus_mode_system;
 mod focus_telemetry_system;
@@ -14,6 +15,7 @@ mod windows;
 
 pub use crate::profile_store::{CpuSelection, PriorityClass};
 pub use error::ProcessError;
+pub use focus_exclusion_store::{FileFocusExclusionStore, FocusExclusionStore};
 pub use focus_mode::{
     background_headroom_cpu_sets, evaluate_focus_candidate, AdaptiveFocusPolicy,
     FileFocusJournalStore, FocusActivationReport, FocusActivationRequest, FocusAdaptiveAction,
@@ -113,6 +115,14 @@ pub const fn classify_game_qos_restore(
     }
 }
 
+pub const fn classify_game_qos_restore_error(error: ProcessError) -> Option<GameQosRestoreOutcome> {
+    match error {
+        ProcessError::ProcessExited => Some(GameQosRestoreOutcome::Exited),
+        ProcessError::InvalidExecutableIdentity => Some(GameQosRestoreOutcome::IdentityChanged),
+        _ => None,
+    }
+}
+
 pub struct ProcessController;
 
 impl ProcessController {
@@ -163,6 +173,33 @@ impl ProcessController {
         let outcome = backend::restore_game_qos(&target, record)?;
         journal.clear()?;
         Ok(outcome)
+    }
+
+    pub fn restore_pending_game_qos<S: GameQosJournalStore>(
+        installation: &crate::game_discovery::GameInstallation,
+        journal: &mut S,
+    ) -> Result<Option<GameQosRestoreOutcome>, ProcessError> {
+        let Some(record) = journal.load()? else {
+            return Ok(None);
+        };
+        if record.creation_time_100ns == 0
+            || record.canonical_image != installation.executable
+            || !record.prior.execution_speed_throttled
+            || record.applied.execution_speed_throttled
+        {
+            return Err(ProcessError::InvalidExecutableIdentity);
+        }
+        match Self::restore_game_qos(installation, &record, journal) {
+            Ok(outcome) => Ok(Some(outcome)),
+            Err(error) => {
+                if let Some(outcome) = classify_game_qos_restore_error(error) {
+                    journal.clear()?;
+                    Ok(Some(outcome))
+                } else {
+                    Err(error)
+                }
+            }
+        }
     }
 }
 

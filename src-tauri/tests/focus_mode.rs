@@ -7,12 +7,13 @@ use std::{
 
 use wuwa_ini_tool_lib::process_control::{
     background_headroom_cpu_sets, evaluate_focus_candidate, AdaptiveFocusPolicy, CpuSelection,
-    CpuSetInfo, CpuTopology, FileFocusJournalStore, FocusActivationRequest, FocusAdaptiveAction,
-    FocusAdaptiveDecision, FocusBackend, FocusConfig, FocusContentionKind, FocusError,
-    FocusJournal, FocusJournalEntry, FocusJournalStore, FocusModeController, FocusProcessIdentity,
-    FocusProcessLoad, FocusProcessSnapshot, FocusProcessStatus, FocusRestoreOutcome,
-    FocusTelemetrySample, FocusThresholds, PriorityClass, ProcessorGroup,
-    SystemFocusTelemetrySampler, FOCUS_JOURNAL_SCHEMA_VERSION,
+    CpuSetInfo, CpuTopology, FileFocusExclusionStore, FileFocusJournalStore,
+    FocusActivationRequest, FocusAdaptiveAction, FocusAdaptiveDecision, FocusBackend, FocusConfig,
+    FocusContentionKind, FocusError, FocusExclusionStore, FocusJournal, FocusJournalEntry,
+    FocusJournalStore, FocusModeController, FocusProcessIdentity, FocusProcessLoad,
+    FocusProcessSnapshot, FocusProcessStatus, FocusRestoreOutcome, FocusTelemetrySample,
+    FocusThresholds, PriorityClass, ProcessorGroup, SystemFocusTelemetrySampler,
+    FOCUS_JOURNAL_SCHEMA_VERSION,
 };
 
 fn identity(pid: u32, image: &str) -> FocusProcessIdentity {
@@ -21,6 +22,25 @@ fn identity(pid: u32, image: &str) -> FocusProcessIdentity {
         creation_time_100ns: u64::from(pid) * 100,
         canonical_image: PathBuf::from(image),
     }
+}
+
+#[test]
+fn focus_process_creation_time_uses_a_lossless_wire_string() {
+    let identity = FocusProcessIdentity {
+        pid: 10,
+        creation_time_100ns: u64::MAX,
+        canonical_image: PathBuf::from("/opt/tools/worker.exe"),
+    };
+    let encoded = serde_json::to_value(&identity).unwrap();
+
+    assert_eq!(
+        encoded["creation_time_100ns"],
+        serde_json::Value::String(u64::MAX.to_string())
+    );
+    assert_eq!(
+        serde_json::from_value::<FocusProcessIdentity>(encoded).unwrap(),
+        identity
+    );
 }
 
 fn normal_process(pid: u32, image: &str) -> FocusProcessSnapshot {
@@ -354,6 +374,68 @@ fn pinned_and_default_communication_capture_streaming_apps_are_protected() {
         evaluate_focus_candidate(&normal_process(12, "Discord.exe"), &FocusConfig::default())
             .status,
         FocusProcessStatus::Communication
+    );
+}
+
+#[test]
+fn pinned_exclusions_are_resolved_only_from_a_fresh_preview_and_invalidate_old_tokens() {
+    let candidate = normal_process(10, "/opt/tools/worker.exe");
+    let identity = candidate.identity.clone();
+    let mut controller = controller([candidate], true);
+    let preview = controller.preview().unwrap();
+
+    assert_eq!(
+        controller
+            .preview_candidate_executable(preview.token, &identity)
+            .unwrap(),
+        identity.canonical_image
+    );
+    let mut unknown = identity.clone();
+    unknown.pid = 11;
+    assert_eq!(
+        controller.preview_candidate_executable(preview.token, &unknown),
+        Err(FocusError::InvalidSelection)
+    );
+
+    controller.replace_pinned_executables([identity.canonical_image.clone()].into());
+    assert_eq!(
+        controller.preview_candidate_executable(preview.token, &identity),
+        Err(FocusError::PreviewRequired)
+    );
+    assert_eq!(
+        controller.preview().unwrap().candidates[0].status,
+        FocusProcessStatus::Pinned
+    );
+}
+
+#[test]
+fn file_focus_exclusion_store_round_trips_only_validated_canonical_executables() {
+    let temp = tempfile::tempdir().unwrap();
+    let executable = temp.path().join("worker.exe");
+    std::fs::write(&executable, b"fixture").unwrap();
+    let executable = executable.canonicalize().unwrap();
+    let mut store = FileFocusExclusionStore::new(temp.path().join("app-data"));
+
+    assert!(store.load().unwrap().is_empty());
+    store.save(&[executable.clone()].into()).unwrap();
+    assert_eq!(store.load().unwrap(), [executable].into());
+}
+
+#[cfg(unix)]
+#[test]
+fn file_focus_exclusion_store_rejects_a_symlinked_configuration_file() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().unwrap();
+    let app_data = temp.path().join("app-data");
+    std::fs::create_dir_all(&app_data).unwrap();
+    let target = temp.path().join("foreign.json");
+    std::fs::write(&target, b"{}").unwrap();
+    symlink(&target, app_data.join("focus-exclusions.json")).unwrap();
+
+    assert_eq!(
+        FileFocusExclusionStore::new(app_data).load(),
+        Err(FocusError::ConfigFailure)
     );
 }
 
