@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "spec": "wuwa-ini-tool-v1",
-  "status": "plan-approved",
-  "currentGate": "implementation",
-  "updatedAt": "2026-07-15T01:20:00+09:00",
+  "status": "implementation-complete-release-gated",
+  "currentGate": "windows-release-verification",
+  "updatedAt": "2026-07-15T02:17:49+09:00",
   "decisions": [
     "React TypeScript Vite plus Rust in Tauri v2",
     "Windows x64 NSIS distribution",
@@ -56,19 +56,22 @@
     "secure-command-implementer": "completed",
     "secure-command-reviewer": "approved",
     "governance-implementer": "completed",
-    "application-surface-implementer": "in-progress",
-    "application-surface-reviewer": "changes-requested",
-    "branding-implementer": "in-progress"
+    "application-surface-implementer": "completed",
+    "application-surface-reviewer": "approved",
+    "branding-implementer": "completed",
+    "updater-implementer": "completed",
+    "final-integration-reviewer": "approved"
   },
-  "completedTasks": [1, 2, 3, 4, 5, 6, 7, 8, 12],
+  "completedTasks": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
   "openMinors": [
-    "Task 2: complete native browser visual, long-copy, and focus QA when a browser backend is available",
     "Task 3: add a dedicated mixed LF/CRLF terminator preservation regression test",
     "Task 5: reuse custom INI grammar before adding any catalog-managed text option",
     "Task 6: harden superscript COM/LPT and CONIN$/CONOUT$ aliases",
     "Task 6: execute registry, junction, and reparse discovery tests on Windows CI and a clean VM",
     "Task 7: execute helper-process, WASAPI, PDH, CPU Set, QoS, and Focus restore tests on Windows CI and a clean VM",
-    "Task 8: execute the supervisor, single-instance, tray, updater-resume, and fail-closed process-observation paths on Windows CI and a clean VM"
+    "Task 8: execute the supervisor, single-instance, tray, updater-resume, and fail-closed process-observation paths on Windows CI and a clean VM",
+    "Task 9: recapture the final global-updater shell at the minimum Windows viewport during Windows desktop QA",
+    "Task 13: build, install, upgrade, uninstall, and tamper-test the signed x64 NSIS release on Windows CI and a clean VM"
   ],
-  "next": "Complete Task 9 application surfaces, typed frontend adapter, workflow tests, accessibility states, and desktop visual QA"
+  "next": "Run Task 13 Windows CI and clean-VM release verification, provision protected updater signing secrets, and publish only after the signed NSIS, updater, tamper, upgrade, restore, and hardware-matrix gates pass"
 }
