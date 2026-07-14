@@ -4,8 +4,9 @@ mod validation;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use model::{
-    BilingualText, BuiltinPreset, CatalogOption, OptionConstraints, OptionEvidence, OptionStatus,
-    OptionValueType, ProfileIniChange, RiskLevel,
+    BilingualText, BuiltinPreset, CatalogOption, CpuBuiltinPreset, CpuPresetMode,
+    OptionConstraints, OptionEvidence, OptionStatus, OptionValueType, ProfileIniChange, RiskLevel,
+    RuntimeObservation,
 };
 pub use validation::{validate_builtin, validate_option};
 
@@ -19,6 +20,7 @@ const EMBEDDED_PRESETS: &str = include_str!("../../../catalog/presets.json");
 pub struct Catalog {
     pub options: BTreeMap<String, CatalogOption>,
     pub presets: Vec<BuiltinPreset>,
+    pub cpu_presets: Vec<CpuBuiltinPreset>,
 }
 
 #[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
@@ -65,6 +67,7 @@ impl Catalog {
         let catalog = Self {
             options: indexed,
             presets: presets.presets,
+            cpu_presets: presets.cpu_presets,
         };
         let mut preset_ids = BTreeSet::new();
         for preset in &catalog.presets {
@@ -77,6 +80,17 @@ impl Catalog {
             ensure_bilingual(&preset.name, &preset.id)?;
             ensure_bilingual(&preset.description, &preset.id)?;
             validate_builtin(&catalog, preset)?;
+        }
+        let mut cpu_ids = BTreeSet::new();
+        for preset in &catalog.cpu_presets {
+            if preset.id.is_empty() || !cpu_ids.insert(preset.id.as_str()) {
+                return invalid_metadata(&preset.id, "invalid_cpu_preset_id");
+            }
+            ensure_bilingual(&preset.name, &preset.id)?;
+            ensure_bilingual(&preset.description, &preset.id)?;
+            if preset.default_priority != "normal" || preset.auto_select_elevated {
+                return invalid_metadata(&preset.id, "unsafe_cpu_preset_default");
+            }
         }
         Ok(catalog)
     }
@@ -104,22 +118,39 @@ fn validate_metadata(option: &CatalogOption) -> Result<(), CatalogError> {
     }) {
         return invalid_metadata(&option.key, "invalid_source_url");
     }
-    if option.evidence.tested_game_version.trim().is_empty()
-        || option.evidence.tested_date.trim().is_empty()
-        || option.evidence.tested_hardware.trim().is_empty()
+    if option
+        .evidence
+        .tested_game_version
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty() || value.chars().count() > 32)
+        || option
+            .evidence
+            .tested_date
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        || option
+            .evidence
+            .tested_hardware
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty() || value.chars().count() > 256)
     {
         return invalid_metadata(&option.key, "incomplete_evidence");
     }
-    let date_format = time::format_description::parse_borrowed::<2>("[year]-[month]-[day]")
-        .expect("static date format is valid");
-    if time::Date::parse(&option.evidence.tested_date, &date_format).is_err() {
-        return invalid_metadata(&option.key, "invalid_tested_date");
+    if let Some(date) = option.evidence.tested_date.as_deref() {
+        let format = time::format_description::parse_borrowed::<2>("[year]-[month]-[day]")
+            .expect("static date format is valid");
+        if time::Date::parse(date, &format).is_err() {
+            return invalid_metadata(&option.key, "invalid_tested_date");
+        }
+    }
+    let evidence_complete = option.evidence.tested_game_version.is_some()
+        && option.evidence.tested_date.is_some()
+        && option.evidence.tested_hardware.is_some();
+    if option.evidence.runtime_verified && !evidence_complete {
+        return invalid_metadata(&option.key, "runtime_verified_without_test_metadata");
     }
     if option.status == OptionStatus::Verified && !option.evidence.runtime_verified {
         return invalid_metadata(&option.key, "verified_without_runtime_evidence");
-    }
-    if option.evidence.runtime_verified && !option.evidence.present_in_file {
-        return invalid_metadata(&option.key, "runtime_verified_without_presence");
     }
     if option
         .constraints

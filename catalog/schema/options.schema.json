@@ -44,15 +44,13 @@
         "tested_game_version",
         "tested_date",
         "tested_hardware",
-        "present_in_file",
         "runtime_verified"
       ],
       "properties": {
         "source_url": { "type": "string", "format": "uri", "pattern": "^https://" },
-        "tested_game_version": { "type": "string", "minLength": 1 },
-        "tested_date": { "type": "string", "format": "date" },
-        "tested_hardware": { "type": "string", "minLength": 1 },
-        "present_in_file": { "type": "boolean" },
+        "tested_game_version": { "type": ["string", "null"], "minLength": 1, "maxLength": 32 },
+        "tested_date": { "type": ["string", "null"], "format": "date" },
+        "tested_hardware": { "type": ["string", "null"], "minLength": 1, "maxLength": 256 },
         "runtime_verified": { "type": "boolean" }
       }
     },

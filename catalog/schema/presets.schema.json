@@ -4,12 +4,18 @@
   "title": "Wuwa ini Tool built-in presets",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "presets"],
+  "required": ["schema_version", "presets", "cpu_presets"],
   "properties": {
     "schema_version": { "const": 1 },
     "presets": {
       "type": "array",
       "items": { "$ref": "#/$defs/preset" }
+    },
+    "cpu_presets": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/cpu_preset" }
     }
   },
   "$defs": {
@@ -41,6 +47,20 @@
         "name": { "$ref": "#/$defs/text" },
         "description": { "$ref": "#/$defs/text" },
         "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } }
+      }
+    },
+    "cpu_preset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "mode", "risk", "default_priority", "auto_select_elevated"],
+      "properties": {
+        "id": { "enum": ["system-default", "prefer-performance", "custom"] },
+        "name": { "$ref": "#/$defs/text" },
+        "description": { "$ref": "#/$defs/text" },
+        "mode": { "enum": ["all", "prefer_performance", "custom"] },
+        "risk": { "enum": ["low", "medium", "high"] },
+        "default_priority": { "const": "normal" },
+        "auto_select_elevated": { "const": false }
       }
     }
   }

@@ -14,10 +14,9 @@
       "status": "community_reported",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scalability-reference-for-unreal-engine",
-        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -34,10 +33,9 @@
       "status": "community_reported",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scalability-reference-for-unreal-engine",
-        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -54,10 +52,9 @@
       "status": "community_reported",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
-        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -74,10 +71,9 @@
       "status": "community_reported",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
-        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -94,10 +90,9 @@
       "status": "community_reported",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
-        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -114,10 +109,9 @@
       "status": "community_reported",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
-        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -134,10 +128,9 @@
       "status": "experimental",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scalability-reference-for-unreal-engine",
-        "tested_game_version": "No independent WuWa runtime test",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -154,10 +147,9 @@
       "status": "experimental",
       "evidence": {
         "source_url": "https://github.com/AlteriaX/WuWa-Configs",
-        "tested_game_version": "No independent evidence that current WuWa consumes this key",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -174,10 +166,9 @@
       "status": "experimental",
       "evidence": {
         "source_url": "https://github.com/AlteriaX/WuWa-Configs",
-        "tested_game_version": "No independent evidence for current WuWa behavior",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -194,10 +185,9 @@
       "status": "experimental",
       "evidence": {
         "source_url": "https://github.com/AlteriaX/WuWa-Configs",
-        "tested_game_version": "No independent evidence for current WuWa behavior",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     },
@@ -214,10 +204,9 @@
       "status": "experimental",
       "evidence": {
         "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
-        "tested_game_version": "No independent current WuWa test; compatibility risk retained",
-        "tested_date": "2026-07-14",
-        "tested_hardware": "Not independently tested",
-        "present_in_file": true,
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
         "runtime_verified": false
       }
     }

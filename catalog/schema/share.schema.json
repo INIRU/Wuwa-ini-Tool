@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/INIRU/Wuwa-ini-Tool/catalog/schema/share.schema.json",
+  "title": "Wuwa ini Tool portable profile share",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "creating_app_version", "provenance", "exported_at", "portability_warnings", "profile"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "creating_app_version": { "type": "string", "minLength": 1, "maxLength": 32 },
+    "provenance": { "const": "wuwa_ini_tool_profile" },
+    "exported_at": { "type": "string", "format": "date-time" },
+    "portability_warnings": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "enum": ["device_specific_cpu_excluded"] }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "patch"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "patch": { "$ref": "profile.schema.json#/$defs/patch" }
+      }
+    }
+  }
+}

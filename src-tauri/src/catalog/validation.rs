@@ -1,8 +1,15 @@
+use std::collections::BTreeSet;
+
 use super::{BuiltinPreset, Catalog, CatalogError, CatalogOption, OptionStatus, OptionValueType};
 
+const MAX_VALUE_CHARS: usize = 8192;
+
 pub fn validate_option(option: &CatalogOption, value: &str) -> Result<(), CatalogError> {
+    if value.chars().any(char::is_control) {
+        return invalid(&option.key, "control_character");
+    }
     let value = value.trim_matches(|character: char| character.is_ascii_whitespace());
-    if value.is_empty() {
+    if value.is_empty() || value.chars().count() > MAX_VALUE_CHARS {
         return invalid(&option.key, "empty_value");
     }
 
@@ -68,6 +75,8 @@ pub fn validate_option(option: &CatalogOption, value: &str) -> Result<(), Catalo
 }
 
 pub fn validate_builtin(catalog: &Catalog, preset: &BuiltinPreset) -> Result<(), CatalogError> {
+    let is_vanilla = preset.id == "vanilla";
+    let mut seen = BTreeSet::new();
     for change in &preset.changes {
         let option = catalog
             .options
@@ -76,12 +85,31 @@ pub fn validate_builtin(catalog: &Catalog, preset: &BuiltinPreset) -> Result<(),
         if option.section != change.section {
             return invalid(&change.key, "section_mismatch");
         }
+        if !seen.insert(change.key.to_ascii_lowercase()) {
+            return invalid(&change.key, "duplicate_preset_key");
+        }
+        if is_vanilla && change.value.is_some() {
+            return invalid(&change.key, "vanilla_must_delete_values");
+        }
         if let Some(value) = change.value.as_deref() {
             if option.status != OptionStatus::Verified || !option.evidence.runtime_verified {
                 return Err(CatalogError::UnverifiedPresetOption(change.key.clone()));
             }
             validate_option(option, value)?;
+        } else if !is_vanilla
+            && (option.status != OptionStatus::Verified || !option.evidence.runtime_verified)
+        {
+            return Err(CatalogError::UnverifiedPresetOption(change.key.clone()));
         }
+    }
+    if is_vanilla
+        && (preset.changes.len() != catalog.options.len()
+            || catalog
+                .options
+                .keys()
+                .any(|key| !seen.contains(&key.to_ascii_lowercase())))
+    {
+        return invalid(&preset.id, "vanilla_must_delete_every_catalog_key_once");
     }
     Ok(())
 }

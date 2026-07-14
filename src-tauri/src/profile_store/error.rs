@@ -18,6 +18,12 @@ pub enum ProfileError {
     ProfileNotFound(String),
     #[error("profile_already_exists: {0}")]
     ProfileAlreadyExists(String),
+    #[error("profile_name_already_exists: {0}")]
+    ProfileNameAlreadyExists(String),
+    #[error("revision_conflict: expected {expected}, actual {actual}")]
+    RevisionConflict { expected: u64, actual: u64 },
+    #[error("share_too_large: {actual} > {maximum}")]
+    ShareTooLarge { actual: u64, maximum: u64 },
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
     #[error("io_{operation}: {path}: {source}")]

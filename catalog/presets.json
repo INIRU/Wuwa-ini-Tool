@@ -49,5 +49,43 @@
       },
       "changes": []
     }
+  ],
+  "cpu_presets": [
+    {
+      "id": "system-default",
+      "name": { "en": "System Default", "ko": "시스템 기본값" },
+      "description": {
+        "en": "Uses all available processors and Normal priority without forcing a device-specific selection.",
+        "ko": "장치별 선택을 강제하지 않고 사용 가능한 모든 프로세서와 보통 우선도를 사용합니다."
+      },
+      "mode": "all",
+      "risk": "low",
+      "default_priority": "normal",
+      "auto_select_elevated": false
+    },
+    {
+      "id": "prefer-performance",
+      "name": { "en": "Prefer Performance Cores", "ko": "성능 코어 선호" },
+      "description": {
+        "en": "Requests a portable performance-core preference when Windows reports compatible CPU Sets; availability depends on the current PC.",
+        "ko": "Windows가 호환 CPU Sets를 제공할 때 이식 가능한 성능 코어 선호를 요청합니다. 사용 가능 여부는 현재 PC에 따라 달라집니다."
+      },
+      "mode": "prefer_performance",
+      "risk": "medium",
+      "default_priority": "normal",
+      "auto_select_elevated": false
+    },
+    {
+      "id": "custom",
+      "name": { "en": "Custom", "ko": "사용자 지정" },
+      "description": {
+        "en": "Lets the user explicitly choose supported process settings. Device-specific selections are not carried into shared profiles.",
+        "ko": "사용자가 지원되는 프로세스 설정을 직접 선택합니다. 장치별 선택은 공유 프로필에 포함되지 않습니다."
+      },
+      "mode": "custom",
+      "risk": "high",
+      "default_priority": "normal",
+      "auto_select_elevated": false
+    }
   ]
 }
