@@ -350,7 +350,8 @@ fn community_reported_option_cannot_enter_verified_builtin_preset() {
 
 Add cases for bilingual text presence, source URL, tested version/date,
 range/type validation, schema-version rejection, safe filename export, unknown
-profile key rejection, CPU/priority round-trip, bounded import size, portable
+catalog-managed key rejection, valid custom INI entry round-trip, invalid
+custom section/key/value rejection, CPU/priority round-trip, bounded import size, portable
 export with no absolute path/backup/device fields, and non-destructive name
 collision handling.
 
@@ -370,7 +371,10 @@ preset remains intentionally conservative and its bilingual description says
 so. Never copy third-party descriptions or configs. Export a versioned portable
 share envelope with provenance and creating app version. Import validates but
 does not save or apply until a separate explicit call; a name collision returns
-a stable conflict that leaves the existing profile unchanged.
+a stable conflict that leaves the existing profile unchanged. Store catalog
+patches separately from user-defined section/key/value entries. Custom entries
+are syntax-validated, labeled runtime-unverified, and included in portable
+export/import without being promoted into the catalog.
 
 - [ ] **Step 4: Run GREEN and JSON schema checks**
 
@@ -631,7 +635,8 @@ Add tests for first-run acknowledgement, external-change conflict, game-running
 write lock, raw-editor accordion, custom profile save/import error, restore
 preview, bilingual switch, theme, close-to-tray copy, loading/empty/error
 states, updater prompt, keyboard navigation, portable profile export, untrusted
-import preview, and non-destructive profile-name collision handling.
+import preview, non-destructive profile-name collision handling, adding a
+non-catalog custom INI entry, and its save/export/import round-trip.
 
 - [ ] **Step 2: Run RED**
 
@@ -648,7 +653,9 @@ state; disable Apply until a current preview exists. Use individual Lucide
 imports. Render High/Realtime tooltips on hover, focus, and click. Use original
 copy, never copied third-party option descriptions. Imported profiles are
 previewed and saved under an available user-confirmed name; they are never
-applied automatically.
+applied automatically. The Engine.ini page provides a structured custom-entry
+row (section, key, value) in addition to the raw accordion editor. Both routes
+use the same preview token, diff, backup, and apply commands.
 
 - [ ] **Step 4: Run GREEN, typecheck, and production build**
 

@@ -45,6 +45,10 @@ Source design: `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`
   local paths, backups, and device identifiers; validate untrusted imports,
   preview them before saving or applying, and resolve name collisions without
   overwriting an existing profile.
+- REQ-CAT-006: Allow explicit custom INI section/key/value entries that are not
+  in the catalog, label them as user-defined and runtime-unverified, validate
+  their INI syntax, and preserve them through profile save/export/import and
+  the normal diff/backup transaction.
 
 ## CPU and Game Process
 

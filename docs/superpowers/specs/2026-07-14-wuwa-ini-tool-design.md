@@ -111,6 +111,22 @@ the source and requires a new diff instead of overwriting it.
    imported profile automatically.
 5. On a name collision, offer a validated new name and preserve the existing
    profile unchanged.
+6. Include explicit user-defined INI entries as portable section/key/value
+   records. They remain `custom` and runtime-unverified rather than being
+   promoted into the catalog by import.
+
+### Custom INI entries
+
+- The option editor accepts a section, key, and value even when the key is not
+  present in the catalog, for example `[SystemSettings] r.IniruFPSOpti=1`.
+- Custom entries always display a warning that their effect and compatibility
+  are unverified. They are never inserted into a verified built-in preset.
+- Reject NUL, embedded line endings, invalid section delimiters, empty keys,
+  unsafe size, and duplicate entries whose intended result is ambiguous.
+- Values are INI data only. They are never passed to a shell, launcher command
+  line, registry command, or code evaluator.
+- Preview, external-change detection, byte backup, atomic apply, readback, and
+  restore rules are identical to catalog-managed changes and raw editor edits.
 
 ### Game launch and process control
 
