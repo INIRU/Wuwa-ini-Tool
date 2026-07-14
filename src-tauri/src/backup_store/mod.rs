@@ -93,6 +93,7 @@ impl BackupStore {
             ensure_hash(&snapshot.sha256, &expected)?;
 
             let backup = self.create_from_snapshot(&snapshot, reason)?;
+            require_cleanup_resolved(&backup.cleanup_pending)?;
             self.ensure_present_unchanged(&identity, &snapshot, &expected)?;
             // ReplaceFileW needs write access to the source. Release the Windows
             // no-write-sharing handle only after the final pre-commit check; the
@@ -145,6 +146,9 @@ impl BackupStore {
                 .as_ref()
                 .map(|snapshot| self.create_from_snapshot(snapshot, ApplyReason::Restore))
                 .transpose()?;
+            if let Some(backup) = &operation_backup {
+                require_cleanup_resolved(&backup.cleanup_pending)?;
+            }
             self.ensure_expectation_unchanged(&identity, current.as_ref(), &expectation)?;
             if let Some(snapshot) = current.as_mut() {
                 snapshot.release_write_exclusion();
@@ -231,7 +235,7 @@ impl BackupStore {
             record.record.pinned = pinned;
             let result = record.record.clone();
             if let Some(path) = self.save_metadata(&identity.path, &metadata)? {
-                return Err(BackupError::CleanupPending { path });
+                return Err(BackupError::CleanupPending { paths: vec![path] });
             }
             Ok(result)
         })
@@ -389,7 +393,7 @@ impl BackupStore {
             atomic::sync_parent_directory(&directory.join(METADATA_FILE_NAME))?;
             metadata.pending_deletions = remaining;
             if let Some(path) = self.save_metadata(source, metadata)? {
-                return Err(BackupError::CleanupPending { path });
+                return Err(BackupError::CleanupPending { paths: vec![path] });
             }
         }
         Ok(())
@@ -563,6 +567,16 @@ fn aggregate_cleanup_pending(
         }
     }
     metadata
+}
+
+fn require_cleanup_resolved(paths: &[PathBuf]) -> Result<(), BackupError> {
+    if paths.is_empty() {
+        Ok(())
+    } else {
+        Err(BackupError::CleanupPending {
+            paths: paths.to_vec(),
+        })
+    }
 }
 
 fn validate_metadata(source: &Path, metadata: &BackupMetadata) -> Result<(), BackupError> {
@@ -1059,8 +1073,8 @@ mod tests {
     };
 
     use super::{
-        aggregate_cleanup_pending, source_lock_key_for, validate_windows_case_sensitive_flag,
-        with_source_lock,
+        aggregate_cleanup_pending, require_cleanup_resolved, source_lock_key_for,
+        validate_windows_case_sensitive_flag, with_source_lock,
     };
 
     #[test]
@@ -1132,5 +1146,34 @@ mod tests {
         let pending = aggregate_cleanup_pending(vec![metadata.clone()], Some(source.clone()));
 
         assert_eq!(pending, vec![metadata, source]);
+    }
+
+    #[test]
+    fn prerequisite_metadata_cleanup_warning_stops_later_source_work() {
+        let pending = vec![std::path::PathBuf::from("metadata-cleanup.json")];
+        for later_error in [
+            super::BackupError::SourceConflict {
+                expected: "before".to_owned(),
+                actual: "external".to_owned(),
+            },
+            super::BackupError::io(
+                "replace",
+                "Engine.ini",
+                std::io::Error::other("later atomic error"),
+            ),
+        ] {
+            let later_work_ran = std::cell::Cell::new(false);
+            let result: Result<(), super::BackupError> = require_cleanup_resolved(&pending)
+                .and_then(|()| {
+                    later_work_ran.set(true);
+                    Err(later_error)
+                });
+
+            assert!(matches!(
+                result,
+                Err(super::BackupError::CleanupPending { ref paths }) if paths == &pending
+            ));
+            assert!(!later_work_ran.get());
+        }
     }
 }

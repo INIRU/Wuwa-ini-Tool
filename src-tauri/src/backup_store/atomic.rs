@@ -509,13 +509,13 @@ where
 
 fn finish_failed_write(
     original: BackupError,
-    rollback: Result<Option<PathBuf>, BackupError>,
+    rollback: Result<Vec<PathBuf>, BackupError>,
 ) -> Result<AtomicWriteResult, BackupError> {
     match rollback {
-        Ok(None) => Err(original),
-        Ok(Some(path)) => Err(BackupError::Unrecoverable {
+        Ok(paths) if paths.is_empty() => Err(original),
+        Ok(paths) => Err(BackupError::Unrecoverable {
             original: Box::new(original),
-            rollback: Box::new(BackupError::CleanupPending { path }),
+            rollback: Box::new(BackupError::CleanupPending { paths }),
         }),
         Err(rollback) => Err(BackupError::Unrecoverable {
             original: Box::new(original),
@@ -554,13 +554,37 @@ fn finalize_replace_receipt(receipt: ReplaceReceipt) -> Option<PathBuf> {
     }
 }
 
+fn take_outer_capture(receipt: &mut ReplaceReceipt) -> Option<PathBuf> {
+    receipt.capture.take()
+}
+
+fn complete_capture_rollback_with_finalize<D, F>(
+    mut cleanup_pending: Vec<PathBuf>,
+    durable_restore: D,
+    finalize_outer: F,
+) -> Result<Vec<PathBuf>, BackupError>
+where
+    D: FnOnce() -> Result<(), BackupError>,
+    F: FnOnce() -> Option<PathBuf>,
+{
+    durable_restore()?;
+    if let Some(path) = finalize_outer() {
+        cleanup_pending.push(path);
+    }
+    Ok(cleanup_pending)
+}
+
 fn rollback_destination(
     destination: &Path,
     rollback: &RollbackSource,
-    receipt: ReplaceReceipt,
-) -> Result<Option<PathBuf>, BackupError> {
+    mut receipt: ReplaceReceipt,
+) -> Result<Vec<PathBuf>, BackupError> {
     ensure_installed_destination(destination, &receipt.installed)?;
-    if let Some(capture) = receipt.capture.clone() {
+    if let Some(capture) = take_outer_capture(&mut receipt) {
+        #[cfg(windows)]
+        let mut cleanup_pending = Vec::new();
+        #[cfg(not(windows))]
+        let cleanup_pending = Vec::new();
         let expected =
             expected_fingerprint(rollback).ok_or_else(|| BackupError::SourceConflict {
                 expected: "present_atomic_capture".to_owned(),
@@ -583,21 +607,27 @@ fn rollback_destination(
                 true,
             )?;
             if let Some(path) = finalize_replace_receipt(rollback_receipt) {
-                return Err(BackupError::CleanupPending { path });
+                cleanup_pending.push(path);
             }
         }
         #[cfg(not(windows))]
         restore_capture_platform(&capture, destination)?;
-        persist_attributes_and_flush(destination, rollback_attributes(rollback)?)?;
-        let restored = fingerprint_file(destination)?;
-        if restored != expected {
-            return Err(BackupError::ReadbackMismatch {
-                path: destination.to_path_buf(),
-                expected: expected.sha256,
-                actual: restored.sha256,
-            });
-        }
-        return Ok(finalize_replace_receipt(receipt));
+        return complete_capture_rollback_with_finalize(
+            cleanup_pending,
+            || {
+                persist_attributes_and_flush(destination, rollback_attributes(rollback)?)?;
+                let restored = fingerprint_file(destination)?;
+                if restored != expected {
+                    return Err(BackupError::ReadbackMismatch {
+                        path: destination.to_path_buf(),
+                        expected: expected.sha256,
+                        actual: restored.sha256,
+                    });
+                }
+                Ok(())
+            },
+            || finalize_replace_receipt(receipt),
+        );
     }
     match rollback {
         RollbackSource::Missing => {
@@ -605,7 +635,7 @@ fn rollback_destination(
                 delete_file_no_follow(destination, receipt.installed.identity)?;
                 sync_parent(destination)?;
             }
-            Ok(finalize_replace_receipt(receipt))
+            Ok(finalize_replace_receipt(receipt).into_iter().collect())
         }
         RollbackSource::Backup {
             path,
@@ -615,7 +645,7 @@ fn rollback_destination(
         } => {
             let bytes = read_verified_bytes(path, sha256)?;
             restore_present(destination, &bytes, sha256, attributes)?;
-            Ok(finalize_replace_receipt(receipt))
+            Ok(finalize_replace_receipt(receipt).into_iter().collect())
         }
         RollbackSource::Bytes {
             bytes,
@@ -624,7 +654,7 @@ fn rollback_destination(
             attributes,
         } => {
             restore_present(destination, bytes, sha256, attributes)?;
-            Ok(finalize_replace_receipt(receipt))
+            Ok(finalize_replace_receipt(receipt).into_iter().collect())
         }
     }
 }
@@ -999,22 +1029,7 @@ where
             reason: "recovery_journal_must_be_a_regular_file",
         });
     }
-    let parent = journal
-        .path
-        .parent()
-        .ok_or_else(|| BackupError::InvalidPath {
-            path: journal.path.clone(),
-            reason: "recovery_journal_has_no_parent",
-        })?;
-    let journal_name = journal
-        .path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| BackupError::InvalidPath {
-            path: journal.path.clone(),
-            reason: "recovery_journal_has_no_file_name",
-        })?;
-    let temporary = parent.join(format!(".{journal_name}.{}.tmp", Uuid::new_v4()));
+    let temporary = journal_update_temporary_path(journal)?;
     hook(JournalUpdatePoint::BeforeTempWrite)
         .map_err(|error| BackupError::io("journal_update_hook", &journal.path, error))?;
     let mut file = OpenOptions::new()
@@ -1099,6 +1114,24 @@ fn cleanup_temporary(path: &Path) -> Result<(), BackupError> {
         Err(error) => Err(BackupError::io("temporary_metadata", path, error)),
         Ok(_) => remove_owned_temp_with_hook(path, |_| Ok(())),
     }
+}
+
+#[cfg(any(windows, test))]
+fn journal_update_temporary_path(
+    journal: &TransactionJournalHandle,
+) -> Result<PathBuf, BackupError> {
+    let parent = journal
+        .path
+        .parent()
+        .ok_or_else(|| BackupError::InvalidPath {
+            path: journal.path.clone(),
+            reason: "recovery_journal_has_no_parent",
+        })?;
+    Ok(parent.join(format!(
+        ".{}.{}.tmp",
+        journal.record.destination_name,
+        Uuid::new_v4()
+    )))
 }
 
 fn remove_owned_temp_with_hook<F>(path: &Path, hook: F) -> Result<(), BackupError>
@@ -2589,13 +2622,118 @@ mod tests {
                 "Engine.ini",
                 std::io::Error::other("primary"),
             ),
-            Ok(Some(pending.clone())),
+            Ok(vec![pending.clone()]),
         );
 
         assert!(matches!(
             result,
             Err(BackupError::Unrecoverable { rollback, .. })
-                if matches!(rollback.as_ref(), BackupError::CleanupPending { path } if path == &pending)
+                if matches!(rollback.as_ref(), BackupError::CleanupPending { paths } if paths == &vec![pending.clone()])
         ));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn rollback_transfers_capture_ownership_before_nested_replace() {
+        let capture = std::env::temp_dir().join("outer-capture.ini");
+        let mut receipt = ReplaceReceipt {
+            installed: FileFingerprint {
+                sha256: sha256_hex(b"installed"),
+                identity: (1, 1),
+            },
+            capture: Some(capture.clone()),
+        };
+
+        let transferred = take_outer_capture(&mut receipt);
+
+        assert_eq!(transferred, Some(capture));
+        assert!(receipt.capture.is_none());
+    }
+
+    #[test]
+    fn nested_cleanup_warning_still_finishes_durability_and_outer_resolution() {
+        let durable = std::cell::Cell::new(false);
+        let outer_resolved = std::cell::Cell::new(false);
+        let nested_pending = std::path::PathBuf::from("nested-cleanup.json");
+
+        let warnings = complete_capture_rollback_with_finalize(
+            vec![nested_pending.clone()],
+            || {
+                durable.set(true);
+                Ok(())
+            },
+            || {
+                outer_resolved.set(true);
+                None
+            },
+        )
+        .unwrap();
+
+        assert!(durable.get());
+        assert!(outer_resolved.get());
+        assert_eq!(warnings, vec![nested_pending]);
+    }
+
+    #[test]
+    fn journal_update_temp_uses_owned_scavenger_grammar() {
+        let directory = tempfile::tempdir().unwrap();
+        let operation_id = uuid::Uuid::new_v4();
+        let journal = TransactionJournalHandle {
+            path: directory
+                .path()
+                .join(format!(".Engine.ini.{operation_id}.journal")),
+            record: TransactionJournal {
+                schema_version: TRANSACTION_JOURNAL_SCHEMA_VERSION,
+                operation_id: operation_id.to_string(),
+                destination_name: "Engine.ini".to_owned(),
+                replacement_name: format!(".Engine.ini.{operation_id}.tmp"),
+                capture_name: format!(".Engine.ini.{operation_id}.capture"),
+                expected_destination_sha256: "a".repeat(64),
+                replacement_sha256: "b".repeat(64),
+                phase: TransactionPhase::Prepared,
+            },
+        };
+
+        let temporary = journal_update_temporary_path(&journal).unwrap();
+        let name = temporary.file_name().unwrap().to_str().unwrap();
+        let suffix = name
+            .strip_prefix(".Engine.ini.")
+            .and_then(|name| name.strip_suffix(".tmp"))
+            .expect("journal temp must match the owned scavenger prefix");
+
+        assert!(uuid::Uuid::parse_str(suffix).is_ok_and(|parsed| parsed.to_string() == suffix));
+    }
+
+    #[test]
+    fn crash_residue_from_synced_journal_temp_is_scavenged_without_foreign_deletion() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("Engine.ini");
+        let operation_id = uuid::Uuid::new_v4();
+        let journal_path = directory
+            .path()
+            .join(format!(".Engine.ini.{operation_id}.journal"));
+        let journal = TransactionJournalHandle {
+            path: journal_path.clone(),
+            record: TransactionJournal {
+                schema_version: TRANSACTION_JOURNAL_SCHEMA_VERSION,
+                operation_id: operation_id.to_string(),
+                destination_name: "Engine.ini".to_owned(),
+                replacement_name: format!(".Engine.ini.{operation_id}.tmp"),
+                capture_name: format!(".Engine.ini.{operation_id}.capture"),
+                expected_destination_sha256: "a".repeat(64),
+                replacement_sha256: "b".repeat(64),
+                phase: TransactionPhase::Resolved,
+            },
+        };
+        fs::write(&journal_path, serde_json::to_vec(&journal.record).unwrap()).unwrap();
+        let generation_temp = journal_update_temporary_path(&journal).unwrap();
+        fs::write(&generation_temp, b"complete-new-generation").unwrap();
+        let foreign = directory.path().join(".Engine.ini.not-a-uuid.tmp");
+        fs::write(&foreign, b"foreign").unwrap();
+
+        scavenge_owned_temps(&destination).unwrap();
+
+        assert!(!generation_temp.exists());
+        assert_eq!(fs::read(foreign).unwrap(), b"foreign");
     }
 }
