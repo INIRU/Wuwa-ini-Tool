@@ -2,6 +2,7 @@ pub mod backup_store;
 pub mod catalog;
 pub mod game_discovery;
 pub mod ini_document;
+pub mod process_control;
 pub mod profile_store;
 
 #[derive(Debug, thiserror::Error)]
