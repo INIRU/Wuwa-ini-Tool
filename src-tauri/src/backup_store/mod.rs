@@ -48,7 +48,13 @@ struct SourceSnapshot {
     sha256: String,
     attributes: OriginalAttributes,
     file_identity: FileIdentity,
-    _handle: File,
+    handle: Option<File>,
+}
+
+impl SourceSnapshot {
+    fn release_write_exclusion(&mut self) {
+        self.handle.take();
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,18 +88,23 @@ impl BackupStore {
         validate_operation_reason(reason)?;
         let identity = resolve_source_identity(source)?;
         with_source_lock(&identity.lock_key, || {
-            let snapshot = self.read_source(&identity)?;
+            let mut snapshot = self.read_source(&identity)?;
             let expected = atomic::sha256_hex(&preview.before);
             ensure_hash(&snapshot.sha256, &expected)?;
 
             let backup = self.create_from_snapshot(&snapshot, reason)?;
             self.ensure_present_unchanged(&identity, &snapshot, &expected)?;
+            // ReplaceFileW needs write access to the source. Release the Windows
+            // no-write-sharing handle only after the final pre-commit check; the
+            // atomic capture fingerprint reconciles any race after this point.
+            snapshot.release_write_exclusion();
             let applied_sha256 = atomic::write_verified_from_backup(
                 &snapshot.path,
                 &preview.after,
                 &snapshot.attributes,
                 &backup.backup_path,
                 &backup.backup.sha256,
+                (snapshot.file_identity.first, snapshot.file_identity.second),
                 &backup.backup.original_attributes,
             )?;
 
@@ -135,12 +146,15 @@ impl BackupStore {
                 });
             }
 
-            let current = self.read_expected_source(&identity, &expectation)?;
+            let mut current = self.read_expected_source(&identity, &expectation)?;
             let operation_backup = current
                 .as_ref()
                 .map(|snapshot| self.create_from_snapshot(snapshot, ApplyReason::Restore))
                 .transpose()?;
             self.ensure_expectation_unchanged(&identity, current.as_ref(), &expectation)?;
+            if let Some(snapshot) = current.as_mut() {
+                snapshot.release_write_exclusion();
+            }
 
             let applied_sha256 = match &operation_backup {
                 Some(backup) => atomic::write_verified_from_backup(
@@ -149,6 +163,12 @@ impl BackupStore {
                     &target.record.original_attributes,
                     &backup.backup_path,
                     &backup.backup.sha256,
+                    {
+                        let snapshot = current
+                            .as_ref()
+                            .expect("present restore has a source snapshot");
+                        (snapshot.file_identity.first, snapshot.file_identity.second)
+                    },
                     &backup.backup.original_attributes,
                 )?,
                 None => atomic::write_verified_if_missing(
@@ -251,7 +271,7 @@ impl BackupStore {
             bytes,
             attributes,
             file_identity,
-            _handle: handle,
+            handle: Some(handle),
         })
     }
 
@@ -472,10 +492,16 @@ impl BackupStore {
         validate_metadata(source, &metadata)?;
         let directory = path.parent().expect("metadata path has a parent");
         for stored in &metadata.records {
-            validate_regular_owned_file(
-                &directory.join(&stored.file_name),
-                "backup_must_be_a_regular_file",
-            )?;
+            let backup_path = directory.join(&stored.file_name);
+            validate_regular_owned_file(&backup_path, "backup_must_be_a_regular_file")?;
+            let actual = atomic::hash_file(&backup_path)?;
+            if actual != stored.record.sha256 {
+                return Err(BackupError::HashMismatch {
+                    path: backup_path,
+                    expected: stored.record.sha256.clone(),
+                    actual,
+                });
+            }
         }
         Ok(metadata)
     }
@@ -643,6 +669,7 @@ fn resolve_source_identity(source: &Path) -> Result<SourceIdentity, BackupError>
     })?;
     let canonical_parent = fs::canonicalize(parent)
         .map_err(|error| BackupError::io("canonicalize_source_parent", parent, error))?;
+    validate_source_directory_case_policy(&canonical_parent)?;
     let path = canonical_parent.join(file_name);
     Ok(SourceIdentity {
         lock_key: source_lock_key(&path),
@@ -728,11 +755,46 @@ fn validate_retired_file_name(file_name: &str) -> Result<(), BackupError> {
 }
 
 fn source_id(source: &Path) -> String {
-    #[cfg(windows)]
-    let normalized = source.to_string_lossy().to_lowercase();
-    #[cfg(not(windows))]
-    let normalized = source.to_string_lossy();
-    atomic::sha256_hex(normalized.as_bytes())
+    atomic::sha256_hex(&normalized_path_bytes(source, cfg!(windows)))
+}
+
+#[cfg(test)]
+fn source_id_from_raw_bytes_for_test(bytes: &[u8]) -> String {
+    atomic::sha256_hex(bytes)
+}
+
+#[cfg(unix)]
+fn normalized_path_bytes(path: &Path, case_insensitive: bool) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+
+    path.as_os_str()
+        .as_bytes()
+        .iter()
+        .map(|byte| {
+            if case_insensitive {
+                byte.to_ascii_lowercase()
+            } else {
+                *byte
+            }
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn normalized_path_bytes(path: &Path, case_insensitive: bool) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+
+    path.as_os_str()
+        .encode_wide()
+        .flat_map(|unit| {
+            let normalized = if case_insensitive && (b'A' as u16..=b'Z' as u16).contains(&unit) {
+                unit + 32
+            } else {
+                unit
+            };
+            normalized.to_le_bytes()
+        })
+        .collect()
 }
 
 fn ensure_hash(actual: &str, expected: &str) -> Result<(), BackupError> {
@@ -748,9 +810,7 @@ fn ensure_hash(actual: &str, expected: &str) -> Result<(), BackupError> {
 
 fn paths_equal(left: &Path, right: &Path) -> bool {
     #[cfg(windows)]
-    return left
-        .to_string_lossy()
-        .eq_ignore_ascii_case(&right.to_string_lossy());
+    return normalized_path_bytes(left, true) == normalized_path_bytes(right, true);
     #[cfg(not(windows))]
     return left == right;
 }
@@ -777,17 +837,83 @@ fn with_source_lock<T>(lock_key: &str, operation: impl FnOnce() -> T) -> T {
 }
 
 fn source_lock_key_for(path: &Path, case_insensitive: bool) -> String {
-    let path = path.to_string_lossy();
-    let normalized = if case_insensitive {
-        path.to_lowercase()
-    } else {
-        path.into_owned()
-    };
-    atomic::sha256_hex(normalized.as_bytes())
+    atomic::sha256_hex(&normalized_path_bytes(path, case_insensitive))
 }
 
 fn source_lock_key(path: &Path) -> String {
     source_lock_key_for(path, cfg!(windows))
+}
+
+#[cfg(any(windows, test))]
+fn validate_windows_case_sensitive_flag(path: &Path, flags: u32) -> Result<(), BackupError> {
+    const FILE_CS_FLAG_CASE_SENSITIVE_DIR: u32 = 0x0000_0001;
+    if flags & FILE_CS_FLAG_CASE_SENSITIVE_DIR == 0 {
+        Ok(())
+    } else {
+        Err(BackupError::InvalidPath {
+            path: path.to_path_buf(),
+            reason: "case_sensitive_source_directories_are_not_supported",
+        })
+    }
+}
+
+#[cfg(not(windows))]
+fn validate_source_directory_case_policy(_path: &Path) -> Result<(), BackupError> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_source_directory_case_policy(path: &Path) -> Result<(), BackupError> {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+
+    const FILE_CASE_SENSITIVE_INFO_CLASS: u32 = 23;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+
+    #[repr(C)]
+    struct FileCaseSensitiveInfo {
+        flags: u32,
+    }
+    #[link(name = "Kernel32")]
+    extern "system" {
+        fn GetFileInformationByHandleEx(
+            file: *mut std::ffi::c_void,
+            info_class: u32,
+            info: *mut std::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+
+    // Source IDs intentionally use case-folded raw UTF-16 only after the parent
+    // directory confirms standard Windows case-insensitive name semantics.
+    let directory = OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|error| BackupError::io("open_source_parent", path, error))?;
+    let mut info = FileCaseSensitiveInfo { flags: 0 };
+    // SAFETY: directory is an open directory handle and info is writable storage
+    // of the exact structure required by FileCaseSensitiveInfo.
+    let read = unsafe {
+        GetFileInformationByHandleEx(
+            directory.as_raw_handle(),
+            FILE_CASE_SENSITIVE_INFO_CLASS,
+            (&mut info as *mut FileCaseSensitiveInfo).cast(),
+            std::mem::size_of::<FileCaseSensitiveInfo>() as u32,
+        )
+    };
+    if read == 0 {
+        return Err(BackupError::io(
+            "query_source_parent_case_sensitivity",
+            path,
+            std::io::Error::last_os_error(),
+        ));
+    }
+    validate_windows_case_sensitive_flag(path, info.flags)
 }
 
 #[cfg(windows)]
@@ -905,7 +1031,7 @@ mod tests {
         time::Duration,
     };
 
-    use super::{source_lock_key_for, with_source_lock};
+    use super::{source_lock_key_for, validate_windows_case_sensitive_flag, with_source_lock};
 
     #[test]
     fn same_source_operations_are_serialized_in_process() {
@@ -944,5 +1070,27 @@ mod tests {
         let first = source_lock_key_for(Path::new(r"C:\Game\Engine.ini"), true);
         let second = source_lock_key_for(Path::new(r"c:\game\ENGINE.INI"), true);
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn source_ids_do_not_collapse_distinct_non_utf8_paths() {
+        let first = super::source_id_from_raw_bytes_for_test(b"/game/\x80.ini");
+        let second = super::source_id_from_raw_bytes_for_test(b"/game/\x81.ini");
+
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn windows_case_sensitive_directories_are_rejected() {
+        let result =
+            validate_windows_case_sensitive_flag(std::path::Path::new(r"C:\Game"), 0x0000_0001);
+
+        assert!(matches!(
+            result,
+            Err(super::BackupError::InvalidPath {
+                reason: "case_sensitive_source_directories_are_not_supported",
+                ..
+            })
+        ));
     }
 }

@@ -40,6 +40,21 @@ pub enum BackupError {
         original: Box<BackupError>,
         rollback: Box<BackupError>,
     },
+    #[error(
+        "replace_reconciliation_required: code={code}, destination={destination}, replacement={replacement}, capture={capture}"
+    )]
+    ReconciliationRequired {
+        code: u32,
+        destination: PathBuf,
+        replacement: PathBuf,
+        capture: PathBuf,
+    },
+    #[error("durability_unavailable: {path}: {source}")]
+    DurabilityUnavailable {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 impl BackupError {

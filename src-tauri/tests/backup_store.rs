@@ -496,3 +496,21 @@ fn apply_scavenges_strictly_owned_sibling_temp_files() {
 
     assert!(!temporary.exists());
 }
+
+#[test]
+fn list_reports_a_corrupted_stored_backup() {
+    let fixture = TestStore::new(b"before");
+    let applied = fixture
+        .store
+        .apply(
+            fixture.source(),
+            &fixture.preview(b"after"),
+            ApplyReason::Preset,
+        )
+        .unwrap();
+    std::fs::write(&applied.backup_path, b"corrupt").unwrap();
+
+    let result = fixture.store.list(fixture.source());
+
+    assert!(matches!(result, Err(BackupError::HashMismatch { .. })));
+}
