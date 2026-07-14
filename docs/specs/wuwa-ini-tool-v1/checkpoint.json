@@ -35,5 +35,5 @@
     "release-security-researcher": "completed",
     "engine-ini-evidence-researcher": "completed"
   },
-  "next": "Execute the implementation plan with test-first task gates"
+  "next": "Task 2 — shared DTOs, localization, theme, and accessible primitives"
 }
