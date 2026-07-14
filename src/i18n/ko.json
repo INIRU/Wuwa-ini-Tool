@@ -1,0 +1,40 @@
+{
+  "app": {
+    "name": "Wuwa ini Tool",
+    "tagline": "명조를 위한 설정 및 프로세스 제어 도구",
+    "version": "버전 {{version}}"
+  },
+  "navigation": {
+    "home": "홈",
+    "engineIni": "Engine.ini",
+    "cpuPriority": "CPU 및 우선순위",
+    "profiles": "프로필",
+    "backups": "백업",
+    "settings": "설정",
+    "about": "정보"
+  },
+  "theme": {
+    "system": "시스템",
+    "light": "라이트",
+    "dark": "다크"
+  },
+  "language": {
+    "english": "영어",
+    "korean": "한국어"
+  },
+  "action": {
+    "apply": "적용",
+    "cancel": "취소",
+    "close": "닫기",
+    "launchGame": "게임 실행",
+    "viewDiff": "차이 보기",
+    "backupAndApply": "백업 후 적용"
+  },
+  "editor": {
+    "advanced": "고급 편집기"
+  },
+  "warning": {
+    "high": "높음 우선순위는 시스템 응답성을 저하시킬 수 있습니다.",
+    "realtime": "실시간 우선순위는 Windows를 응답 불능 상태로 만들 수 있습니다."
+  }
+}

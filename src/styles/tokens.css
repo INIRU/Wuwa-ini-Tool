@@ -1,0 +1,57 @@
+:root {
+  color-scheme: light dark;
+  --color-bg: #f4f0e6;
+  --color-panel: #fffaf0;
+  --color-text: #282724;
+  --color-muted: #68645c;
+  --color-accent: #927238;
+  --color-accent-contrast: #ffffff;
+  --color-danger: #a63f3f;
+  --color-border: #c9c0ae;
+  --focus-ring: 0 0 0 0.1875rem rgb(146 114 56 / 38%);
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --font-size-body: 1rem;
+  --font-size-control: 0.9375rem;
+  --font-size-meta: 0.875rem;
+  --target-size: 2.75rem;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #1d1d1b;
+  --color-panel: #282724;
+  --color-text: #f4f0e6;
+  --color-muted: #b9b1a2;
+  --color-accent: #c2a15f;
+  --color-accent-contrast: #1d1d1b;
+  --color-danger: #e98282;
+  --color-border: #4c4943;
+  --focus-ring: 0 0 0 0.1875rem rgb(194 161 95 / 48%);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --color-bg: #1d1d1b;
+    --color-panel: #282724;
+    --color-text: #f4f0e6;
+    --color-muted: #b9b1a2;
+    --color-accent: #c2a15f;
+    --color-accent-contrast: #1d1d1b;
+    --color-danger: #e98282;
+    --color-border: #4c4943;
+    --focus-ring: 0 0 0 0.1875rem rgb(194 161 95 / 48%);
+  }
+}

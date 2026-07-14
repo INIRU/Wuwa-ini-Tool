@@ -1,0 +1,40 @@
+{
+  "app": {
+    "name": "Wuwa ini Tool",
+    "tagline": "Configuration and process controls for Wuthering Waves",
+    "version": "Version {{version}}"
+  },
+  "navigation": {
+    "home": "Home",
+    "engineIni": "Engine.ini",
+    "cpuPriority": "CPU & Priority",
+    "profiles": "Profiles",
+    "backups": "Backups",
+    "settings": "Settings",
+    "about": "About"
+  },
+  "theme": {
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark"
+  },
+  "language": {
+    "english": "English",
+    "korean": "Korean"
+  },
+  "action": {
+    "apply": "Apply",
+    "cancel": "Cancel",
+    "close": "Close",
+    "launchGame": "Launch game",
+    "viewDiff": "View diff",
+    "backupAndApply": "Back up and apply"
+  },
+  "editor": {
+    "advanced": "Advanced editor"
+  },
+  "warning": {
+    "high": "High priority can reduce system responsiveness.",
+    "realtime": "Realtime priority can make Windows unresponsive."
+  }
+}
