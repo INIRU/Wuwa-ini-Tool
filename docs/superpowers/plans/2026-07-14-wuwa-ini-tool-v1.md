@@ -405,12 +405,13 @@ and must not inspect arbitrary filesystem locations or the registry.
 fn derives_kuro_saved_config_from_validated_client_executable() {
     let installation = fixture_kuro_tree();
     let result = validate_game_executable(installation.client_exe()).unwrap();
-    assert_eq!(result.engine_ini, installation.root().join("Wuthering Waves Game/Client/Saved/Config/WindowsNoEditor/Engine.ini"));
+    assert_eq!(result.engine_ini, installation.game_root().join("Client/Saved/Config/WindowsNoEditor/Engine.ini"));
 }
 ```
 
 Add Steam layout, wrong filename, missing executable, non-file, symlink escape,
-case-insensitive Windows filename, and manual selection cases.
+case-insensitive Windows filename, manual selection, and a conflicting
+`LOCALAPPDATA` candidate that must never be selected automatically.
 
 - [ ] **Step 2: Run RED**
 
@@ -420,10 +421,18 @@ because the compile-only validator does not recognize a valid fixture.
 
 - [ ] **Step 3: Implement discovery with validated candidates**
 
-Check documented registry/library candidates on Windows, but accept only a
-candidate whose executable and derived Client directory exist. Manual selection
-must pass the same validator. Store canonical paths and compare process images
-against the configured executable directory before applying settings.
+Treat the selected game root as the directory that directly contains `Client`.
+For Steam app `3513350`, parse every library from `libraryfolders.vdf`, then the
+matching `appmanifest_3513350.acf`; do not assume the default Steam library.
+For the native Kuro launcher, use Windows uninstall entries only as candidate
+hints because no stable public Kuro registry key is established. Accept a
+candidate only when its canonical executable ends in
+`Client/Binaries/Win64/Client-Win64-Shipping.exe`; derive Engine.ini only as
+`Client/Saved/Config/WindowsNoEditor/Engine.ini` in that same game tree.
+Manual selection must pass the identical validator. A `%LOCALAPPDATA%` config
+is never an automatic write target and the app must not update two configs.
+Store canonical paths and compare process images against the configured exact
+executable path before applying settings. Never perform an unbounded drive scan.
 
 - [ ] **Step 4: Run GREEN**
 
