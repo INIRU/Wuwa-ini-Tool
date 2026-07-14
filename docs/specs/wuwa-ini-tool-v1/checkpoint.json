@@ -3,7 +3,7 @@
   "spec": "wuwa-ini-tool-v1",
   "status": "plan-approved",
   "currentGate": "implementation",
-  "updatedAt": "2026-07-14T00:00:00+09:00",
+  "updatedAt": "2026-07-15T00:55:00+09:00",
   "decisions": [
     "React TypeScript Vite plus Rust in Tauri v2",
     "Windows x64 NSIS distribution",
@@ -52,19 +52,20 @@
     "process-control-implementer": "completed",
     "process-control-reviewer": "approved",
     "cache-cleanup-implementer": "completed",
-    "cache-cleanup-reviewer": "approved"
+    "cache-cleanup-reviewer": "approved",
+    "secure-command-implementer": "completed",
+    "secure-command-reviewer": "approved"
   },
-  "completedTasks": [1, 2, 3, 4, 5, 6, 7],
+  "completedTasks": [1, 2, 3, 4, 5, 6, 7, 8],
   "openMinors": [
-    "Task 1: configure a restrictive CSP before privileged UI commands ship",
     "Task 2: complete native browser visual, long-copy, and focus QA when a browser backend is available",
     "Task 3: add a dedicated mixed LF/CRLF terminator preservation regression test",
     "Task 5: run real Draft 2020-12 schema validation in Task 12 CI",
-    "Task 5: enforce single-instance profile access in Task 8 and keep profile import/export dialogs backend-owned",
     "Task 5: reuse custom INI grammar before adding any catalog-managed text option",
     "Task 6: harden superscript COM/LPT and CONIN$/CONOUT$ aliases",
     "Task 6: execute registry, junction, and reparse discovery tests on Windows CI and a clean VM",
-    "Task 7: execute helper-process, WASAPI, PDH, CPU Set, QoS, and Focus restore tests on Windows CI and a clean VM"
+    "Task 7: execute helper-process, WASAPI, PDH, CPU Set, QoS, and Focus restore tests on Windows CI and a clean VM",
+    "Task 8: execute the supervisor, single-instance, tray, updater-resume, and fail-closed process-observation paths on Windows CI and a clean VM"
   ],
-  "next": "Complete Task 8 cache safety review, supervisor lifecycle, tray behavior, and narrow Tauri command API"
+  "next": "Complete Task 9 application surfaces, typed frontend adapter, workflow tests, accessibility states, and desktop visual QA"
 }
