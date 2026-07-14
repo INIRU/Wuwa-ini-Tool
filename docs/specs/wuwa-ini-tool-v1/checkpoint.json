@@ -50,7 +50,9 @@
     "game-discovery-implementer": "completed",
     "game-discovery-reviewer": "approved",
     "process-control-implementer": "completed",
-    "process-control-reviewer": "approved"
+    "process-control-reviewer": "approved",
+    "cache-cleanup-implementer": "completed",
+    "cache-cleanup-reviewer": "approved"
   },
   "completedTasks": [1, 2, 3, 4, 5, 6, 7],
   "openMinors": [
