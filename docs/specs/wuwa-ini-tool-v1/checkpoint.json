@@ -19,6 +19,17 @@
     "coreToolsAvailable": false,
     "fallbackReason": "No codexthink_status, project_docs, route_doc, checkpoint, gate, or handoff tools were exposed after tool discovery. Local spec/checkpoint/evidence files are used as the fallback."
   },
+  "notionDesign": {
+    "hubUrl": "https://app.notion.com/p/39d8e0da4fcb8159ab03c91ba6029923",
+    "created": true,
+    "readbackVerified": true,
+    "pages": [
+      "00 — Executive Summary",
+      "01 — System Map & Data Flow",
+      "02 — Safety, Evidence & Risk Register",
+      "03 — Verification & Release Log"
+    ]
+  },
   "agents": {
     "reference-researcher": "completed",
     "release-security-researcher": "completed",
