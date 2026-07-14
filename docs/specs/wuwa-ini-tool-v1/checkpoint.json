@@ -42,16 +42,20 @@
     "backup-store-implementer": "final-recovery-fix-in-progress",
     "backup-store-reviewer": "changes-requested",
     "catalog-profile-implementer": "completed",
-    "catalog-profile-reviewer": "approved"
+    "catalog-profile-reviewer": "approved",
+    "game-discovery-implementer": "completed",
+    "game-discovery-reviewer": "approved"
   },
-  "completedTasks": [1, 2, 3, 5],
+  "completedTasks": [1, 2, 3, 5, 6],
   "openMinors": [
     "Task 1: configure a restrictive CSP before privileged UI commands ship",
     "Task 2: complete native browser visual, long-copy, and focus QA when a browser backend is available",
     "Task 3: add a dedicated mixed LF/CRLF terminator preservation regression test",
     "Task 5: run real Draft 2020-12 schema validation in Task 12 CI",
     "Task 5: enforce single-instance profile access in Task 8 and keep profile import/export dialogs backend-owned",
-    "Task 5: reuse custom INI grammar before adding any catalog-managed text option"
+    "Task 5: reuse custom INI grammar before adding any catalog-managed text option",
+    "Task 6: harden superscript COM/LPT and CONIN$/CONOUT$ aliases",
+    "Task 6: execute registry, junction, and reparse discovery tests on Windows CI and a clean VM"
   ],
-  "next": "Complete Task 4 ambiguous recovery-state fixes, then Task 6 validated game discovery"
+  "next": "Complete Task 4 journal finalization fixes, then Task 7 Windows CPU and priority control"
 }
