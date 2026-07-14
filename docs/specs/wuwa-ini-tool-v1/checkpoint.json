@@ -49,9 +49,10 @@
     "catalog-profile-reviewer": "approved",
     "game-discovery-implementer": "completed",
     "game-discovery-reviewer": "approved",
-    "process-control-implementer": "in-progress"
+    "process-control-implementer": "completed",
+    "process-control-reviewer": "approved"
   },
-  "completedTasks": [1, 2, 3, 4, 5, 6],
+  "completedTasks": [1, 2, 3, 4, 5, 6, 7],
   "openMinors": [
     "Task 1: configure a restrictive CSP before privileged UI commands ship",
     "Task 2: complete native browser visual, long-copy, and focus QA when a browser backend is available",
@@ -60,7 +61,8 @@
     "Task 5: enforce single-instance profile access in Task 8 and keep profile import/export dialogs backend-owned",
     "Task 5: reuse custom INI grammar before adding any catalog-managed text option",
     "Task 6: harden superscript COM/LPT and CONIN$/CONOUT$ aliases",
-    "Task 6: execute registry, junction, and reparse discovery tests on Windows CI and a clean VM"
+    "Task 6: execute registry, junction, and reparse discovery tests on Windows CI and a clean VM",
+    "Task 7: execute helper-process, WASAPI, PDH, CPU Set, QoS, and Focus restore tests on Windows CI and a clean VM"
   ],
-  "next": "Complete Task 7 Windows CPU, priority, and reversible WuWa Focus Mode control"
+  "next": "Complete Task 8 cache safety review, supervisor lifecycle, tray behavior, and narrow Tauri command API"
 }
