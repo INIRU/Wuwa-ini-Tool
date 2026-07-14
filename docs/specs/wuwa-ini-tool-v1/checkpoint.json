@@ -3,7 +3,7 @@
   "spec": "wuwa-ini-tool-v1",
   "status": "plan-approved",
   "currentGate": "implementation",
-  "updatedAt": "2026-07-15T00:55:00+09:00",
+  "updatedAt": "2026-07-15T01:20:00+09:00",
   "decisions": [
     "React TypeScript Vite plus Rust in Tauri v2",
     "Windows x64 NSIS distribution",
@@ -54,13 +54,16 @@
     "cache-cleanup-implementer": "completed",
     "cache-cleanup-reviewer": "approved",
     "secure-command-implementer": "completed",
-    "secure-command-reviewer": "approved"
+    "secure-command-reviewer": "approved",
+    "governance-implementer": "completed",
+    "application-surface-implementer": "in-progress",
+    "application-surface-reviewer": "changes-requested",
+    "branding-implementer": "in-progress"
   },
-  "completedTasks": [1, 2, 3, 4, 5, 6, 7, 8],
+  "completedTasks": [1, 2, 3, 4, 5, 6, 7, 8, 12],
   "openMinors": [
     "Task 2: complete native browser visual, long-copy, and focus QA when a browser backend is available",
     "Task 3: add a dedicated mixed LF/CRLF terminator preservation regression test",
-    "Task 5: run real Draft 2020-12 schema validation in Task 12 CI",
     "Task 5: reuse custom INI grammar before adding any catalog-managed text option",
     "Task 6: harden superscript COM/LPT and CONIN$/CONOUT$ aliases",
     "Task 6: execute registry, junction, and reparse discovery tests on Windows CI and a clean VM",
