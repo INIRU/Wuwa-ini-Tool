@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/INIRU/Wuwa-ini-Tool/catalog/schema/presets.schema.json",
+  "title": "Wuwa ini Tool built-in presets",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "presets"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "presets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/preset" }
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["en", "ko"],
+      "properties": {
+        "en": { "type": "string", "minLength": 1 },
+        "ko": { "type": "string", "minLength": 1 }
+      }
+    },
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section", "key", "value"],
+      "properties": {
+        "section": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "minLength": 1 },
+        "value": { "type": ["string", "null"] }
+      }
+    },
+    "preset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "description", "changes"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+        "name": { "$ref": "#/$defs/text" },
+        "description": { "$ref": "#/$defs/text" },
+        "changes": { "type": "array", "items": { "$ref": "#/$defs/change" } }
+      }
+    }
+  }
+}

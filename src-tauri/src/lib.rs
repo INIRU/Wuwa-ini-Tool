@@ -1,5 +1,7 @@
 pub mod backup_store;
+pub mod catalog;
 pub mod ini_document;
+pub mod profile_store;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {

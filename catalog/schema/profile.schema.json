@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/INIRU/Wuwa-ini-Tool/catalog/schema/profile.schema.json",
+  "title": "Wuwa ini Tool custom profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "name", "patch"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "patch": { "$ref": "#/$defs/patch" }
+  },
+  "$defs": {
+    "change": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["section", "key", "value"],
+      "properties": {
+        "section": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "minLength": 1 },
+        "value": { "type": ["string", "null"] }
+      }
+    },
+    "cpu_selection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": { "mode": { "const": "all" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": { "mode": { "const": "prefer_performance" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "ids"],
+          "properties": {
+            "mode": { "const": "manual_cpu_sets" },
+            "ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "group", "mask"],
+          "properties": {
+            "mode": { "const": "hard_affinity" },
+            "group": { "type": "integer", "minimum": 0, "maximum": 65535 },
+            "mask": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "process": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu_selection", "priority"],
+      "properties": {
+        "cpu_selection": { "$ref": "#/$defs/cpu_selection" },
+        "priority": { "enum": ["idle", "below_normal", "normal", "above_normal", "high", "realtime"] }
+      }
+    },
+    "patch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "managed_ini", "process"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "managed_ini": { "type": "array", "items": { "$ref": "#/$defs/change" } },
+        "process": { "$ref": "#/$defs/process" }
+      }
+    }
+  }
+}

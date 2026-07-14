@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "presets": [
+    {
+      "id": "vanilla",
+      "name": { "en": "Vanilla", "ko": "기본값" },
+      "description": {
+        "en": "Removes every catalog-managed override so the game can choose its own defaults. Unrelated Engine.ini content is preserved.",
+        "ko": "카탈로그가 관리하는 모든 덮어쓰기를 제거하여 게임이 기본값을 선택하게 합니다. 관련 없는 Engine.ini 내용은 보존됩니다."
+      },
+      "changes": [
+        { "section": "SystemSettings", "key": "r.ScreenPercentage", "value": null },
+        { "section": "SystemSettings", "key": "r.ViewDistanceScale", "value": null },
+        { "section": "SystemSettings", "key": "r.Tonemapper.Sharpen", "value": null },
+        { "section": "SystemSettings", "key": "r.MotionBlurQuality", "value": null },
+        { "section": "SystemSettings", "key": "r.BloomQuality", "value": null },
+        { "section": "SystemSettings", "key": "r.MaxAnisotropy", "value": null },
+        { "section": "SystemSettings", "key": "foliage.DensityScale", "value": null },
+        { "section": "SystemSettings", "key": "MaxCPUCores", "value": null },
+        { "section": "SystemSettings", "key": "AsyncLoadingThreadPriority", "value": null },
+        { "section": "SystemSettings", "key": "TaskGraph.TaskThreadPriority", "value": null },
+        { "section": "SystemSettings", "key": "r.RHIThread.Enable", "value": null }
+      ]
+    },
+    {
+      "id": "balanced",
+      "name": { "en": "Balanced", "ko": "균형" },
+      "description": {
+        "en": "Intentionally conservative: no non-default Engine.ini option currently meets the independent runtime-evidence gate.",
+        "ko": "의도적으로 보수적인 프리셋입니다. 현재 독립적인 런타임 근거 기준을 충족하는 비기본 Engine.ini 옵션이 없습니다."
+      },
+      "changes": []
+    },
+    {
+      "id": "performance",
+      "name": { "en": "Performance", "ko": "성능" },
+      "description": {
+        "en": "Intentionally conservative: community performance claims remain available in the catalog with warnings but are not auto-applied.",
+        "ko": "의도적으로 보수적인 프리셋입니다. 커뮤니티 성능 주장은 경고와 함께 카탈로그에서 제공하지만 자동 적용하지 않습니다."
+      },
+      "changes": []
+    },
+    {
+      "id": "visual-quality",
+      "name": { "en": "Visual Quality", "ko": "화질" },
+      "description": {
+        "en": "Intentionally conservative: no non-default visual option has sufficient current WuWa runtime verification for automatic use.",
+        "ko": "의도적으로 보수적인 프리셋입니다. 자동 적용할 만큼 현재 명조 런타임 검증이 충분한 비기본 화질 옵션이 없습니다."
+      },
+      "changes": []
+    }
+  ]
+}

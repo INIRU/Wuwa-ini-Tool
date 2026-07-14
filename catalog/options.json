@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "options": [
+    {
+      "section": "SystemSettings",
+      "key": "r.ScreenPercentage",
+      "description": {
+        "en": "Requests a lower or higher internal render percentage. Lower values may reduce image clarity, and the game may override the value.",
+        "ko": "내부 렌더링 비율을 낮추거나 높이도록 요청합니다. 낮은 값은 선명도를 떨어뜨릴 수 있으며 게임이 값을 덮어쓸 수 있습니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": 50, "maximum": 200, "allowed_values": [] },
+      "risk": "medium",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scalability-reference-for-unreal-engine",
+        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.ViewDistanceScale",
+      "description": {
+        "en": "Requests a multiplier for view-distance scalability. It can increase CPU and GPU work, and WuWa support is not independently confirmed.",
+        "ko": "가시 거리 스케일의 배율을 요청합니다. CPU와 GPU 부하가 늘 수 있으며 명조에서의 지원 여부는 독립적으로 확인되지 않았습니다."
+      },
+      "value_type": "float",
+      "constraints": { "minimum": 0.1, "maximum": 10, "allowed_values": [] },
+      "risk": "medium",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scalability-reference-for-unreal-engine",
+        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.Tonemapper.Sharpen",
+      "description": {
+        "en": "Requests post-process sharpening. Strong values can create halos or noise, and persistence does not prove that WuWa applied it.",
+        "ko": "후처리 선명화 강도를 요청합니다. 높은 값은 테두리 번짐이나 노이즈를 만들 수 있으며 파일에 남아 있어도 게임 적용을 뜻하지 않습니다."
+      },
+      "value_type": "float",
+      "constraints": { "minimum": 0, "maximum": 10, "allowed_values": [] },
+      "risk": "low",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
+        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.MotionBlurQuality",
+      "description": {
+        "en": "Requests an Unreal motion-blur quality tier. Zero commonly disables the effect upstream, but WuWa may ignore or replace the setting.",
+        "ko": "Unreal 모션 블러 품질 단계를 요청합니다. 상위 엔진에서는 보통 0이 효과를 끄지만 명조가 이 설정을 무시하거나 대체할 수 있습니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": 0, "maximum": 4, "allowed_values": [] },
+      "risk": "low",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
+        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.BloomQuality",
+      "description": {
+        "en": "Requests a bloom quality tier. Visual results and performance impact depend on the game's rendering pipeline.",
+        "ko": "블룸 품질 단계를 요청합니다. 화면 결과와 성능 영향은 게임의 렌더링 파이프라인에 따라 달라집니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": 0, "maximum": 5, "allowed_values": [] },
+      "risk": "low",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
+        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.MaxAnisotropy",
+      "description": {
+        "en": "Requests the maximum anisotropic filtering level. Driver settings and the game can override this value.",
+        "ko": "최대 비등방성 필터링 단계를 요청합니다. 그래픽 드라이버 설정이나 게임이 이 값을 덮어쓸 수 있습니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": 0, "maximum": 16, "allowed_values": [] },
+      "risk": "low",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
+        "tested_game_version": "Community evidence only; current WuWa runtime not independently verified",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "foliage.DensityScale",
+      "description": {
+        "en": "Requests a foliage-density multiplier. Reducing it can noticeably change scene composition, and game support remains unverified.",
+        "ko": "식생 밀도 배율을 요청합니다. 값을 낮추면 장면 구성이 크게 달라질 수 있으며 게임 지원 여부는 검증되지 않았습니다."
+      },
+      "value_type": "float",
+      "constraints": { "minimum": 0, "maximum": 1, "allowed_values": [] },
+      "risk": "medium",
+      "status": "experimental",
+      "evidence": {
+        "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/scalability-reference-for-unreal-engine",
+        "tested_game_version": "No independent WuWa runtime test",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "MaxCPUCores",
+      "description": {
+        "en": "A community-mentioned Engine.ini CPU key. It is not a verified Windows CPU control and must not replace process CPU Sets or affinity.",
+        "ko": "커뮤니티에서 언급되는 Engine.ini CPU 키입니다. 검증된 Windows CPU 제어가 아니며 프로세스 CPU Sets 또는 선호도 설정을 대체하지 않습니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": 0, "maximum": 1024, "allowed_values": [] },
+      "risk": "high",
+      "status": "experimental",
+      "evidence": {
+        "source_url": "https://github.com/AlteriaX/WuWa-Configs",
+        "tested_game_version": "No independent evidence that current WuWa consumes this key",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "AsyncLoadingThreadPriority",
+      "description": {
+        "en": "A community-mentioned loading-thread value. It is not equivalent to Windows process priority and may be ignored or harmful.",
+        "ko": "커뮤니티에서 언급되는 로딩 스레드 값입니다. Windows 프로세스 우선도와 같은 기능이 아니며 무시되거나 부작용이 생길 수 있습니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": -2, "maximum": 2, "allowed_values": [] },
+      "risk": "high",
+      "status": "experimental",
+      "evidence": {
+        "source_url": "https://github.com/AlteriaX/WuWa-Configs",
+        "tested_game_version": "No independent evidence for current WuWa behavior",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "TaskGraph.TaskThreadPriority",
+      "description": {
+        "en": "An advanced Unreal task-thread request reported by users. It is not a verified scheduler control and can cause instability.",
+        "ko": "사용자들이 보고한 고급 Unreal 작업 스레드 요청입니다. 검증된 스케줄러 제어가 아니며 불안정을 일으킬 수 있습니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": -2, "maximum": 2, "allowed_values": [] },
+      "risk": "high",
+      "status": "experimental",
+      "evidence": {
+        "source_url": "https://github.com/AlteriaX/WuWa-Configs",
+        "tested_game_version": "No independent evidence for current WuWa behavior",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.RHIThread.Enable",
+      "description": {
+        "en": "An advanced RHI-thread request. The current game may own this decision, and forcing it can regress stability or performance.",
+        "ko": "고급 RHI 스레드 요청입니다. 현재 게임이 이 결정을 자체 관리할 수 있으며 강제하면 안정성이나 성능이 나빠질 수 있습니다."
+      },
+      "value_type": "boolean",
+      "constraints": { "minimum": null, "maximum": null, "allowed_values": ["0", "1"] },
+      "risk": "high",
+      "status": "experimental",
+      "evidence": {
+        "source_url": "https://dev.epicgames.com/documentation/en-us/unreal-engine/unreal-engine-console-variables-reference",
+        "tested_game_version": "No independent current WuWa test; compatibility risk retained",
+        "tested_date": "2026-07-14",
+        "tested_hardware": "Not independently tested",
+        "present_in_file": true,
+        "runtime_verified": false
+      }
+    }
+  ]
+}

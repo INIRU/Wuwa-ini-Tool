@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/INIRU/Wuwa-ini-Tool/catalog/schema/options.schema.json",
+  "title": "Wuwa ini Tool option catalog",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "options"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "options": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/option" }
+    }
+  },
+  "$defs": {
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["en", "ko"],
+      "properties": {
+        "en": { "type": "string", "minLength": 1 },
+        "ko": { "type": "string", "minLength": 1 }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum", "maximum", "allowed_values"],
+      "properties": {
+        "minimum": { "type": ["number", "null"] },
+        "maximum": { "type": ["number", "null"] },
+        "allowed_values": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_url",
+        "tested_game_version",
+        "tested_date",
+        "tested_hardware",
+        "present_in_file",
+        "runtime_verified"
+      ],
+      "properties": {
+        "source_url": { "type": "string", "format": "uri", "pattern": "^https://" },
+        "tested_game_version": { "type": "string", "minLength": 1 },
+        "tested_date": { "type": "string", "format": "date" },
+        "tested_hardware": { "type": "string", "minLength": 1 },
+        "present_in_file": { "type": "boolean" },
+        "runtime_verified": { "type": "boolean" }
+      }
+    },
+    "option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "section",
+        "key",
+        "description",
+        "value_type",
+        "constraints",
+        "risk",
+        "status",
+        "evidence"
+      ],
+      "properties": {
+        "section": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "minLength": 1 },
+        "description": { "$ref": "#/$defs/text" },
+        "value_type": { "enum": ["boolean", "integer", "float", "text"] },
+        "constraints": { "$ref": "#/$defs/constraints" },
+        "risk": { "enum": ["low", "medium", "high"] },
+        "status": {
+          "enum": ["verified", "community_reported", "experimental", "ignored", "regressed"]
+        },
+        "evidence": { "$ref": "#/$defs/evidence" }
+      }
+    }
+  }
+}
