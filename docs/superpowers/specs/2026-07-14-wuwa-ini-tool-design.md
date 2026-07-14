@@ -227,6 +227,36 @@ CPU profiles are System Default, Prefer Performance Cores, and Custom. Hard
 affinity is an advanced compatibility path. CPU Sets are preferred because they
 are group-aware soft affinity and cooperate better with Windows scheduling.
 
+### Optional Focus Mode
+
+Focus Mode is an experimental, default-off session feature inspired by the
+temporary and exclusion-driven ideas found in public process tools, but it is
+implemented independently for this app and specifically scoped to the validated
+WuWa game session.
+
+1. Preview same-user, same-interactive-session processes with an eligibility or
+   exclusion reason. No change occurs from preview.
+2. Protect Windows/system/protected/critical/session-0 processes, the game,
+   this tool, launcher/overlay families, foreground and visible-window process
+   families, and processes with active audio sessions when Windows reports
+   them. Keep versioned default exclusions for Discord/voice chat, OBS,
+   Streamlabs, XSplit, Xbox Game Bar, NVIDIA/AMD capture, and common streaming
+   helpers; users can pin additional canonical executable exclusions.
+3. The recommended policy changes only Normal to Below Normal. `Select all
+   eligible` still requires a preview and explicit confirmation. Idle, Below
+   Normal, High, and Realtime are not changed automatically.
+4. Store PID, process creation time, canonical executable identity, prior
+   priority, and applied priority in a versioned app-data recovery journal.
+5. On game exit, explicit disable, tool exit, or next startup after a crash,
+   restore only when the same process instance and app-applied value still
+   match. Never overwrite a later user/tool priority change.
+6. Report restored, skipped, exited, denied, identity-changed, externally
+   changed, and recovery-required outcomes per process.
+
+Focus Mode does not edit power plans, core parking, MMCSS, network QoS,
+services, the registry, IFEO, or persistent process rules. It makes no FPS
+guarantee and may reduce performance or responsiveness in selected apps.
+
 Options such as `MaxCPUCores=0`, `AsyncLoadingThreadPriority=1`, and unverified
 TaskGraph/RHI tuning are not shipped as verified CPU controls. Engine CPU
 tweaks and Windows process controls remain separate concepts.

@@ -461,12 +461,13 @@ git commit -m "feat: add safe game discovery"
 
 **Files:**
 - Create: `src-tauri/tests/process_control.rs`
-- Create: `src-tauri/src/process_control/mod.rs`, `model.rs`, `validation.rs`, `unsupported.rs`, `windows.rs`, `error.rs`
+- Create: `src-tauri/tests/focus_mode.rs`
+- Create: `src-tauri/src/process_control/mod.rs`, `model.rs`, `validation.rs`, `focus_mode.rs`, `unsupported.rs`, `windows.rs`, `error.rs`
 - Create: `src-tauri/src/bin/process_fixture.rs`
 - Modify: `src-tauri/src/lib.rs`, `src-tauri/Cargo.toml`
 
 **Interfaces:**
-- Produces: `ProcessController::{topology,apply,readback}`, `PriorityClass`, `CpuSelection`, `ApplyReport`, and a Windows-only fixture process.
+- Produces: `ProcessController::{topology,apply,readback}`, `FocusModeController::{preview,activate,restore}`, `PriorityClass`, `CpuSelection`, `ApplyReport`, `FocusPreview`, `FocusRestoreReport`, and a Windows-only fixture process.
 - Consumes: validated PID/path from Task 6; Microsoft `windows` APIs.
 
 - [ ] **Step 1: Add compile-only process-control stubs, then write failing pure validation tests**
@@ -493,7 +494,12 @@ fn hard_affinity_rejects_bits_outside_the_selected_group() {
 
 Add tests for performance-core selection from relative `EfficiencyClass`, empty
 CPU Sets, multiple groups, all six priority mappings, access-denied reporting,
-and unsupported platform.
+and unsupported platform. Add Focus Mode cases for default-off/preview-only,
+same user/session eligibility, system/critical/protected/denied/game/tool/
+foreground/visible-family exclusions, active-audio and Discord/OBS/streaming
+protections, pinned exclusions, Normal-to-Below-Normal only, explicit select-all
+confirmation, PID-reuse/creation-time/image guards, external priority changes,
+game exit restore, crash journal recovery, and partial/denied restore.
 
 - [ ] **Step 2: Run RED**
 
@@ -509,6 +515,13 @@ APIs, `SetProcessAffinityMask` only for validated single-group hard affinity,
 `SetPriorityClass`, and matching get/readback APIs. Open the process with the
 minimum query/set-information rights. Never elevate automatically. Map Win32
 errors into stable codes without leaking raw paths in user-facing messages.
+Focus Mode enumerates with least privilege, returns exclusion reasons, and
+never mutates a process during preview. Activation changes only the confirmed
+set, journals prior state before each mutation, and reads back. Restore requires
+PID, creation time, canonical image identity, and current app-applied priority
+to match. Built-in exclusions protect communication, capture, streaming,
+overlay, foreground/visible, critical, and active-audio workloads. Do not copy
+third-party algorithms or implement registry/power-plan/service/network tweaks.
 
 - [ ] **Step 4: Run GREEN locally and Windows integration conditionally**
 
@@ -517,6 +530,9 @@ Expected on macOS: pure tests pass and backend reports unsupported.
 Run on Windows: `cargo test --manifest-path src-tauri/Cargo.toml --test process_control -- --include-ignored`  
 Expected: helper process accepts and reads back safe classes/CPU selections;
 Realtime is never applied to the CI runner.
+Run on Windows: `cargo test --manifest-path src-tauri/Cargo.toml --test focus_mode -- --include-ignored`
+Expected: only disposable helper processes are lowered and restored; Discord,
+capture/audio, foreground, system, and runner processes are never modified.
 
 - [ ] **Step 5: Commit**
 
@@ -534,7 +550,7 @@ git commit -m "feat: add Windows process tuning"
 - Modify: `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tauri.conf.json`
 
 **Interfaces:**
-- Produces typed commands `get_app_snapshot`, `preview_ini`, `apply_ini`, `restore_backup`, `save_profile`, `discover_game`, `launch_game`, `get_cpu_topology`, `apply_process_settings`, and supervisor status events.
+- Produces typed commands `get_app_snapshot`, `preview_ini`, `apply_ini`, `restore_backup`, `save_profile`, `discover_game`, `launch_game`, `get_cpu_topology`, `apply_process_settings`, `preview_focus_mode`, `activate_focus_mode`, `deactivate_focus_mode`, and supervisor status events.
 - Consumes: Tasks 3–7.
 
 - [ ] **Step 1: Add compile-only supervisor/command stubs, then write failing validation tests**
@@ -562,6 +578,10 @@ filesystem access, or shell execution.
 Add backend-owned native-dialog import tests for cancellation, filename,
 encoding, NUL/size rejection, and returning candidate text without any write
 or general frontend filesystem permission.
+Add Focus Mode supervisor tests for activation only after the validated game is
+active, exact-once restore on game exit/explicit disable/quit, crash-journal
+recovery before new activation, new eligible process discovery with bounded
+polling, and no mutation when preview/confirmation is stale.
 
 - [ ] **Step 2: Run RED**
 
@@ -642,6 +662,9 @@ import preview, non-destructive profile-name collision handling, adding a
 non-catalog custom INI entry, its save/export/import round-trip, full-document
 paste preview, local Engine.ini import, destructive replacement warning, and
 an explicit apply that still uses the current preview token.
+Add Focus Mode UI tests for default-off state, protected Discord/recording/
+streaming rows, exclusion reasons, user-pinned exclusions, select-all warning,
+active/restoring/partial states, and per-process restore results.
 
 - [ ] **Step 2: Run RED**
 

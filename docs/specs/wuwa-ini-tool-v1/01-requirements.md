@@ -69,6 +69,21 @@ Source design: `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`
   denied, unsupported topology, and process exit.
 - REQ-CPU-006: Do not inject, read/write game memory, hook anti-cheat, install a
   driver, use IFEO persistence, or bypass game technical controls.
+- REQ-CPU-007: Provide an optional, default-off `Focus Mode` that previews
+  eligible same-user/same-session background processes and temporarily lowers
+  only explicitly selected or explicitly confirmed eligible processes while
+  the validated game is running.
+- REQ-CPU-008: Focus Mode must protect system, protected, critical, denied,
+  game/tool/launcher, foreground/visible-window families, active-audio owners
+  when detectable, and default communication/recording/streaming exclusions;
+  Discord, OBS/Streamlabs, capture overlays, and user-pinned exclusions are not
+  modified unless the user deliberately removes their protection.
+- REQ-CPU-009: Focus Mode may lower Normal to Below Normal by default, never
+  auto-change High/Realtime, and must restore exact prior state only after
+  PID, creation time, executable identity, and current applied value still
+  match. Persist a crash-recovery journal, never use IFEO/global registry,
+  power-plan, service, core-parking, or network-QoS tweaks, and surface every
+  skipped/denied/partial restore.
 
 ## Backup and Recovery
 
