@@ -1,5 +1,6 @@
 pub mod backup_store;
 pub mod catalog;
+pub mod game_discovery;
 pub mod ini_document;
 pub mod profile_store;
 
