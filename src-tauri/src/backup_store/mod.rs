@@ -284,7 +284,16 @@ impl BackupStore {
             .metadata()
             .map_err(|error| BackupError::io("source_handle_metadata", &identity.path, error))?;
         validate_link_count_and_reparse(&identity.path, &handle_metadata)?;
-        let file_identity = file_identity(&handle_metadata)?;
+        let file_identity = {
+            #[cfg(windows)]
+            {
+                file_identity(&handle, &identity.path)?
+            }
+            #[cfg(not(windows))]
+            {
+                file_identity(&handle_metadata)?
+            }
+        };
         let mut bytes = Vec::new();
         handle
             .read_to_end(&mut bytes)
@@ -307,9 +316,20 @@ impl BackupStore {
         expected: &str,
     ) -> Result<(), BackupError> {
         validate_regular_source(&identity.path)?;
-        let metadata = fs::metadata(&identity.path)
+        let _metadata = fs::metadata(&identity.path)
             .map_err(|error| BackupError::io("source_metadata", &identity.path, error))?;
-        if file_identity(&metadata)? != snapshot.file_identity {
+        let current_identity = {
+            #[cfg(windows)]
+            {
+                let handle = open_source_locked(&identity.path)?;
+                file_identity(&handle, &identity.path)?
+            }
+            #[cfg(not(windows))]
+            {
+                file_identity(&_metadata)?
+            }
+        };
+        if current_identity != snapshot.file_identity {
             return Err(BackupError::SourceConflict {
                 expected: "same_file_identity".to_owned(),
                 actual: "replaced_file_identity".to_owned(),
@@ -977,9 +997,11 @@ fn open_source_locked(path: &Path) -> Result<File, BackupError> {
 
     const FILE_SHARE_READ: u32 = 0x0000_0001;
     const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     OpenOptions::new()
         .read(true)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)
         .map_err(|error| BackupError::io("open_source_locked", path, error))
 }
@@ -1008,19 +1030,10 @@ fn validate_link_count_and_reparse(
 #[cfg(windows)]
 fn validate_link_count_and_reparse(
     path: &Path,
-    metadata: &fs::Metadata,
+    _metadata: &fs::Metadata,
 ) -> Result<(), BackupError> {
-    use std::os::windows::fs::MetadataExt;
-
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-    if metadata.number_of_links() != Some(1)
-        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-    {
-        return Err(BackupError::InvalidPath {
-            path: path.to_path_buf(),
-            reason: "hardlinks_and_reparse_points_are_not_allowed",
-        });
-    }
+    let file = open_source_locked(path)?;
+    windows_file_identity(&file, path)?;
     Ok(())
 }
 
@@ -1035,20 +1048,65 @@ fn file_identity(metadata: &fs::Metadata) -> Result<FileIdentity, BackupError> {
 }
 
 #[cfg(windows)]
-fn file_identity(metadata: &fs::Metadata) -> Result<FileIdentity, BackupError> {
-    use std::os::windows::fs::MetadataExt;
+fn file_identity(file: &File, path: &Path) -> Result<FileIdentity, BackupError> {
+    windows_file_identity(file, path)
+}
 
-    let first = metadata
-        .volume_serial_number()
-        .ok_or(BackupError::InvalidMetadata(
-            "source_volume_identity_unavailable",
-        ))?;
-    let second = metadata.file_index().ok_or(BackupError::InvalidMetadata(
-        "source_file_identity_unavailable",
-    ))?;
+#[cfg(windows)]
+fn windows_file_identity(file: &File, path: &Path) -> Result<FileIdentity, BackupError> {
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+
+    #[repr(C)]
+    struct ByHandleFileInformation {
+        attributes: u32,
+        creation: FileTime,
+        access: FileTime,
+        write: FileTime,
+        volume: u32,
+        size_high: u32,
+        size_low: u32,
+        links: u32,
+        index_high: u32,
+        index_low: u32,
+    }
+
+    #[link(name = "Kernel32")]
+    extern "system" {
+        fn GetFileInformationByHandle(
+            file: *mut std::ffi::c_void,
+            info: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    let mut info = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+    // SAFETY: `file` owns a valid Windows handle and `info` is writable storage
+    // with the exact layout required by GetFileInformationByHandle.
+    let inspected = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
+    if inspected == 0 {
+        return Err(BackupError::io(
+            "inspect_source_identity",
+            path,
+            std::io::Error::last_os_error(),
+        ));
+    }
+    // SAFETY: a successful call initialized the complete structure.
+    let info = unsafe { info.assume_init() };
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    if info.links != 1 || info.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(BackupError::InvalidPath {
+            path: path.to_path_buf(),
+            reason: "hardlinks_and_reparse_points_are_not_allowed",
+        });
+    }
     Ok(FileIdentity {
-        first: u64::from(first),
-        second,
+        first: u64::from(info.volume),
+        second: (u64::from(info.index_high) << 32) | u64::from(info.index_low),
     })
 }
 

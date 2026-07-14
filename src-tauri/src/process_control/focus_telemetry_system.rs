@@ -66,6 +66,12 @@ mod implementation {
         game_thread_times: BTreeMap<(u32, u64), u64>,
     }
 
+    // SAFETY: PDH query and counter handles are process-local opaque handles and
+    // the PDH API does not require calls to stay on the creating thread. Every
+    // operation on the sampler requires `&mut self`, and the runtime owns it
+    // behind the supervisor mutex, so the query is never accessed concurrently.
+    unsafe impl Send for SystemFocusTelemetrySampler {}
+
     impl SystemFocusTelemetrySampler {
         pub fn new(thresholds: FocusThresholds) -> Result<Self, FocusError> {
             let mut query = PDH_HQUERY::default();
@@ -164,6 +170,18 @@ mod implementation {
     impl Drop for SystemFocusTelemetrySampler {
         fn drop(&mut self) {
             unsafe { PdhCloseQuery(self.query) };
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::SystemFocusTelemetrySampler;
+
+        #[test]
+        fn telemetry_sampler_can_move_to_the_serialized_supervisor_thread() {
+            fn assert_send<T: Send>() {}
+
+            assert_send::<SystemFocusTelemetrySampler>();
         }
     }
 

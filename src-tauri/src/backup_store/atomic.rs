@@ -214,11 +214,7 @@ struct WindowsReadonlyGuard {
 #[cfg(windows)]
 impl WindowsReadonlyGuard {
     fn restore(self) -> Result<(), BackupError> {
-        let metadata = self
-            .file
-            .metadata()
-            .map_err(|error| BackupError::io("readonly_guard_identity", &self.path, error))?;
-        if owned_file_identity(&metadata, &self.path)? != self.expected_identity {
+        if windows_handle_identity(&self.file, &self.path)? != self.expected_identity {
             return Err(BackupError::SourceConflict {
                 expected: format!("readonly_identity:{:?}", self.expected_identity),
                 actual: "readonly_handle_identity_changed".to_owned(),
@@ -1170,22 +1166,66 @@ fn owned_file_identity(metadata: &fs::Metadata, _path: &Path) -> Result<(u64, u6
 }
 
 #[cfg(windows)]
-fn owned_file_identity(metadata: &fs::Metadata, path: &Path) -> Result<(u64, u64), BackupError> {
-    use std::os::windows::fs::MetadataExt;
+fn owned_file_identity(_metadata: &fs::Metadata, path: &Path) -> Result<(u64, u64), BackupError> {
+    let file = open_fingerprint_handle(path)?;
+    windows_handle_identity(&file, path)
+}
 
-    let volume = metadata
-        .volume_serial_number()
-        .ok_or_else(|| BackupError::InvalidPath {
+#[cfg(windows)]
+fn windows_handle_identity(file: &File, path: &Path) -> Result<(u64, u64), BackupError> {
+    use std::os::windows::io::AsRawHandle;
+
+    #[repr(C)]
+    struct FileTime {
+        low: u32,
+        high: u32,
+    }
+
+    #[repr(C)]
+    struct ByHandleFileInformation {
+        attributes: u32,
+        creation: FileTime,
+        access: FileTime,
+        write: FileTime,
+        volume: u32,
+        size_high: u32,
+        size_low: u32,
+        links: u32,
+        index_high: u32,
+        index_low: u32,
+    }
+
+    #[link(name = "Kernel32")]
+    extern "system" {
+        fn GetFileInformationByHandle(
+            file: *mut std::ffi::c_void,
+            info: *mut ByHandleFileInformation,
+        ) -> i32;
+    }
+
+    let mut info = std::mem::MaybeUninit::<ByHandleFileInformation>::uninit();
+    // SAFETY: `file` owns a valid Windows handle and `info` points to writable
+    // storage of the exact structure expected by GetFileInformationByHandle.
+    let inspected = unsafe { GetFileInformationByHandle(file.as_raw_handle(), info.as_mut_ptr()) };
+    if inspected == 0 {
+        return Err(BackupError::io(
+            "inspect_file_identity",
+            path,
+            std::io::Error::last_os_error(),
+        ));
+    }
+    // SAFETY: the successful call initialized the complete structure.
+    let info = unsafe { info.assume_init() };
+    if info.links != 1 || info.attributes & 0x0000_0400 != 0 {
+        return Err(BackupError::InvalidPath {
             path: path.to_path_buf(),
-            reason: "temporary_volume_identity_unavailable",
-        })?;
-    let index = metadata
-        .file_index()
-        .ok_or_else(|| BackupError::InvalidPath {
-            path: path.to_path_buf(),
-            reason: "temporary_file_identity_unavailable",
-        })?;
-    Ok((u64::from(volume), index))
+            reason: "hardlinks_and_reparse_points_are_not_allowed",
+        });
+    }
+    Ok((
+        u64::from(info.volume),
+        (u64::from(info.index_high) << 32) | u64::from(info.index_low),
+    ))
 }
 
 #[cfg(unix)]
@@ -1455,10 +1495,19 @@ where
     }
     let before_identity = owned_file_identity(&before, path)?;
     let mut file = open_fingerprint_handle(path)?;
-    let handle_metadata = file
+    let _handle_metadata = file
         .metadata()
         .map_err(|error| BackupError::io("fingerprint_handle_metadata", path, error))?;
-    let handle_identity = owned_file_identity(&handle_metadata, path)?;
+    let handle_identity = {
+        #[cfg(windows)]
+        {
+            windows_handle_identity(&file, path)?
+        }
+        #[cfg(not(windows))]
+        {
+            owned_file_identity(&_handle_metadata, path)?
+        }
+    };
     if handle_identity != before_identity {
         return Err(BackupError::SourceConflict {
             expected: format!("fingerprint_identity:{before_identity:?}"),
@@ -1546,12 +1595,21 @@ fn persist_attributes_and_flush(
 }
 
 fn verify_handle_path_identity(file: &File, path: &Path) -> Result<(), BackupError> {
-    let handle_metadata = file
+    let _handle_metadata = file
         .metadata()
         .map_err(|error| BackupError::io("handle_identity", path, error))?;
     let path_metadata =
         fs::metadata(path).map_err(|error| BackupError::io("path_identity", path, error))?;
-    let handle_identity = owned_file_identity(&handle_metadata, path)?;
+    let handle_identity = {
+        #[cfg(windows)]
+        {
+            windows_handle_identity(file, path)?
+        }
+        #[cfg(not(windows))]
+        {
+            owned_file_identity(&_handle_metadata, path)?
+        }
+    };
     let path_identity = owned_file_identity(&path_metadata, path)?;
     if handle_identity == path_identity {
         Ok(())
@@ -1941,10 +1999,7 @@ fn clear_readonly_for_replace(
         .open(path)
         .map_err(|error| BackupError::io("open_readonly_guard", path, error))?;
     verify_handle_path_identity(&file, path)?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| BackupError::io("readonly_guard_metadata", path, error))?;
-    let identity = owned_file_identity(&metadata, path)?;
+    let identity = windows_handle_identity(&file, path)?;
     let actual = FileFingerprint {
         sha256: hash_file(path)?,
         identity,
@@ -2263,6 +2318,8 @@ mod tests {
         let receipt = ReplaceReceipt {
             installed: fingerprint_file(&destination).unwrap(),
             capture: Some(capture),
+            #[cfg(windows)]
+            journal: None,
         };
 
         rollback_destination(&destination, &rollback, receipt).unwrap();
