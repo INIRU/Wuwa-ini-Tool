@@ -1,0 +1,48 @@
+name: Feature request
+description: Propose a scoped feature that fits the project's safety boundaries.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user problem, not only a preferred implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Explain the flow, defaults, warnings, and recovery behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety, privacy, and compatibility impact
+      description: Address file/process scope, user confirmation, backups, failure behavior, and data exposure.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Supporting evidence
+      description: Link official documentation or reproducible community evidence. Do not paste unlicensed content.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope acknowledgement
+      options:
+        - label: This request does not require injection, memory access, hooks, drivers, IFEO, anti-cheat bypass, or arbitrary process/file control.
+          required: true
+        - label: I understand that optimization claims require reproducible evidence and cannot promise an FPS gain.
+          required: true

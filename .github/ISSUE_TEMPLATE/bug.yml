@@ -1,0 +1,131 @@
+name: Bug report
+description: Report a reproducible application defect with enough evidence to investigate it.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not use this form for vulnerabilities. Follow SECURITY.md and report them privately.
+        Remove account identifiers, personal paths, access tokens, and unrelated private log data.
+  - type: input
+    id: app-version
+    attributes:
+      label: Wuwa ini Tool version or commit
+      placeholder: "1.0.0 or a full commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: game-version
+    attributes:
+      label: Wuthering Waves game version and region
+      placeholder: "Exact version and region"
+    validations:
+      required: true
+  - type: dropdown
+    id: launcher
+    attributes:
+      label: Launcher
+      options:
+        - Kuro Games launcher
+        - Steam
+        - Other official launcher or installation path
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2, OS build 26100.x, x64"
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: CPU, GPU, RAM, and driver
+      description: Include exact CPU, GPU, installed RAM, GPU driver, and relevant display resolution.
+      placeholder: |
+        CPU: ...
+        GPU / driver: ...
+        RAM: ...
+        Resolution: ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Start from a known state and list one action per step.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected and actual behavior
+      placeholder: |
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: input
+    id: exact-option
+    attributes:
+      label: Exact option or feature
+      description: Provide section and key, or write N/A and name the affected feature.
+      placeholder: "[SystemSettings] r.Example or Backups > Restore"
+    validations:
+      required: true
+  - type: textarea
+    id: before-after
+    attributes:
+      label: Exact before and after values
+      description: Include absent/removed states. Write N/A only if no configuration value changed.
+      placeholder: |
+        Before: ...
+        After: ...
+    validations:
+      required: true
+  - type: textarea
+    id: performance-method
+    attributes:
+      label: FPS / 1% low measurement method
+      description: If performance is claimed, include capture tool, sampling method, runs, warm-up, and aggregation. Otherwise write N/A.
+      placeholder: "Tool, sample duration, run count, warm-up, and calculation, or N/A"
+    validations:
+      required: true
+  - type: textarea
+    id: test-area-duration
+    attributes:
+      label: Test area and duration
+      description: Identify the exact area, route/workload, and duration for each run, or explain why it is not applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Artifacts
+      description: Link sanitized screenshots, frame-time captures, videos, or minimal sample files. State None if unavailable.
+    validations:
+      required: true
+  - type: textarea
+    id: crashes-logs
+    attributes:
+      label: Crashes, regressions, and sanitized logs
+      description: Include negative results and relevant sanitized log excerpts, or explicitly state that none were produced.
+    validations:
+      required: true
+  - type: checkboxes
+    id: acknowledgements
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: I reproduced this with one change at a time and reported negative or inconclusive results.
+          required: true
+        - label: I removed account identifiers, personal paths, secrets, and unrelated private data.
+          required: true
+        - label: This is not a security vulnerability or anti-cheat bypass request.
+          required: true

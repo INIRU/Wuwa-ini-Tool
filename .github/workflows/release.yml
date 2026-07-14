@@ -1,0 +1,178 @@
+name: Draft release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v-prefixed tag to build as a protected draft release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  sbom:
+    name: Generate source SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - name: Generate SPDX JSON SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: release-assets/wuwa-ini-tool.spdx.json
+          upload-artifact: false
+      - name: Upload SBOM for release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-sbom
+          path: release-assets/wuwa-ini-tool.spdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Build signed updater and create draft
+    needs: sbom
+    runs-on: windows-latest
+    environment: release
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
+      - name: Cache Rust build output
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Download generated SBOM
+        uses: actions/download-artifact@v4
+        with:
+          name: release-sbom
+          path: release-assets
+      - name: Fail closed unless release prerequisites are present
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Release tag must be a v-prefixed semantic version."
+          }
+          git show-ref --tags --verify "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "The requested release tag does not exist." }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is missing from the protected release environment."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is missing from the protected release environment."
+          }
+          if (-not (Test-Path "src-tauri/icons/icon.ico")) {
+            throw "The required Windows icon src-tauri/icons/icon.ico is missing."
+          }
+          node scripts/check-version.mjs --tag "$env:RELEASE_TAG" --release
+      - name: Run frontend and repository checks
+        shell: pwsh
+        run: |
+          node scripts/validate-catalog.mjs
+          npm test -- --run
+          npm run typecheck
+          npm run build
+      - name: Run Rust checks
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+      - name: Build signed NSIS updater and create draft release
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: Wuwa ini Tool __VERSION__
+          releaseBody: |
+            This is an automatically generated draft. Do not publish it until the clean-Windows, installer, updater-signature, backup-preservation, and artifact gates pass.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: --bundles nsis
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path "release-assets" | Out-Null
+          $bundleFiles = Get-ChildItem "src-tauri/target/release/bundle/nsis" -File |
+            Where-Object { $_.Name -match '\.(exe|sig)$' } |
+            Sort-Object Name
+          if (-not ($bundleFiles | Where-Object { $_.Name -match '\.exe$' })) {
+            throw "NSIS installer was not produced."
+          }
+          if (-not ($bundleFiles | Where-Object { $_.Name -match '\.sig$' })) {
+            throw "Updater signature was not produced."
+          }
+          $lines = foreach ($file in $bundleFiles) {
+            $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
+            "$hash  $($file.Name)"
+          }
+          Set-Content -Path "release-assets/SHA256SUMS.txt" -Value $lines -Encoding utf8NoBOM
+      - name: Attach checksums and SBOM to draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$env:RELEASE_TAG" "release-assets/SHA256SUMS.txt" "release-assets/wuwa-ini-tool.spdx.json" --clobber
+      - name: Verify required draft assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $release = gh release view "$env:RELEASE_TAG" --json isDraft,assets | ConvertFrom-Json
+          if (-not $release.isDraft) { throw "Release must remain a draft after automation." }
+          $names = @($release.assets | ForEach-Object { $_.name })
+          $required = @(
+            @{ Label = "NSIS installer"; Pattern = '\.exe$' },
+            @{ Label = "updater signature"; Pattern = '\.sig$' },
+            @{ Label = "updater manifest"; Pattern = '^latest\.json$' },
+            @{ Label = "checksums"; Pattern = '^SHA256SUMS\.txt$' },
+            @{ Label = "SBOM"; Pattern = '\.spdx\.json$' }
+          )
+          foreach ($item in $required) {
+            if (-not ($names | Where-Object { $_ -match $item.Pattern })) {
+              throw "Missing required release asset: $($item.Label)."
+            }
+          }

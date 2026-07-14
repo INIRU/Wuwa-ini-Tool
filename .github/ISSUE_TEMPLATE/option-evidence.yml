@@ -1,0 +1,115 @@
+name: Option evidence
+description: Submit reproducible evidence that an Engine.ini option works, is ignored, or has regressed.
+title: "[Evidence]: "
+labels: ["option-evidence", "needs-validation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        File persistence is not runtime verification. Popularity is not reproducibility.
+        Change one variable at a time and include negative or inconclusive results.
+  - type: input
+    id: game-version
+    attributes:
+      label: Wuthering Waves game version and region
+      placeholder: "Exact version and region"
+    validations:
+      required: true
+  - type: dropdown
+    id: launcher
+    attributes:
+      label: Launcher
+      options:
+        - Kuro Games launcher
+        - Steam
+        - Other official launcher or installation path
+    validations:
+      required: true
+  - type: textarea
+    id: hardware
+    attributes:
+      label: CPU, GPU, RAM, Windows, and driver
+      placeholder: |
+        CPU: ...
+        GPU / driver: ...
+        RAM: ...
+        Windows / build: ...
+        Resolution and relevant game settings: ...
+    validations:
+      required: true
+  - type: input
+    id: option
+    attributes:
+      label: Exact section and option key
+      placeholder: "[SystemSettings] r.Streaming.PoolSize"
+    validations:
+      required: true
+  - type: textarea
+    id: before-after
+    attributes:
+      label: Exact before and after values
+      description: Include the absent or removed state and any other configuration held constant.
+      placeholder: |
+        Before: absent
+        After: 1024
+        Held constant: ...
+    validations:
+      required: true
+  - type: dropdown
+    id: claim
+    attributes:
+      label: Claimed evidence state
+      options:
+        - Runtime behavior observed
+        - Present in file only
+        - Ignored or overridden
+        - Regression observed
+        - Inconclusive
+    validations:
+      required: true
+  - type: textarea
+    id: method
+    attributes:
+      label: Test design and FPS / 1% low method
+      description: Include A/B/A ordering, tool, sampling method, warm-up, run count, FPS/1% low calculation when claimed, and controlled variables.
+    validations:
+      required: true
+  - type: textarea
+    id: area-duration
+    attributes:
+      label: Exact test area, route/workload, and duration
+      placeholder: "Area, repeatable route or scene, seconds/minutes per run"
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: Before/after results and raw observations
+      description: Report every run, not only the best result. Separate average FPS, 1% low, frame time, visuals, loading, and subjective observations.
+    validations:
+      required: true
+  - type: textarea
+    id: artifacts
+    attributes:
+      label: Artifacts and source links
+      description: Link frame-time captures, raw tables, screenshots, video, and any upstream/community source. Explain unavailable artifacts.
+    validations:
+      required: true
+  - type: textarea
+    id: crashes-logs
+    attributes:
+      label: Crashes, defects, regressions, and sanitized logs
+      description: Include all negative outcomes and relevant sanitized logs, or explicitly state that no relevant logs were produced.
+    validations:
+      required: true
+  - type: checkboxes
+    id: declarations
+    attributes:
+      label: Declarations
+      options:
+        - label: I did not infer runtime support only because the key persisted in Engine.ini.
+          required: true
+        - label: I have the right to share these artifacts and have not copied incompatible or unlicensed content.
+          required: true
+        - label: I removed account identifiers, personal paths, secrets, and unrelated private data.
+          required: true
