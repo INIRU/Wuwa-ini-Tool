@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 use uuid::Uuid;
 use wuwa_ini_tool_lib::{
-    backup_store::{ApplyReason, BackupError, BackupStore, SourceExpectation},
+    backup_store::{ApplyReason, BackupError, BackupIntegrity, BackupStore, SourceExpectation},
     ini_document::MergePreview,
 };
 
@@ -498,7 +498,7 @@ fn apply_scavenges_strictly_owned_sibling_temp_files() {
 }
 
 #[test]
-fn list_reports_a_corrupted_stored_backup() {
+fn unrelated_corrupt_backup_does_not_hide_or_block_the_first_original() {
     let fixture = TestStore::new(b"before");
     let applied = fixture
         .store
@@ -510,7 +510,31 @@ fn list_reports_a_corrupted_stored_backup() {
         .unwrap();
     std::fs::write(&applied.backup_path, b"corrupt").unwrap();
 
-    let result = fixture.store.list(fixture.source());
+    let entries = fixture
+        .store
+        .list(fixture.source())
+        .expect("structurally valid metadata should remain listable");
+    let original = entries
+        .iter()
+        .find(|entry| entry.backup.reason == ApplyReason::FirstOriginal)
+        .expect("the intact first original remains visible");
+    assert_eq!(original.integrity, BackupIntegrity::Verified);
+    assert_eq!(
+        entries
+            .iter()
+            .find(|entry| entry.backup.id == applied.backup.id)
+            .unwrap()
+            .integrity,
+        BackupIntegrity::Corrupt
+    );
+    fixture
+        .store
+        .restore(
+            fixture.source(),
+            &original.backup.id,
+            SourceExpectation::Present(sha256_hex(b"after")),
+        )
+        .expect("an unrelated corrupt backup must not block restoring the selected intact record");
 
-    assert!(matches!(result, Err(BackupError::HashMismatch { .. })));
+    assert_eq!(std::fs::read(fixture.source()).unwrap(), b"before");
 }

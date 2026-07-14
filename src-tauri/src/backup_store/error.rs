@@ -1,5 +1,32 @@
 use std::path::PathBuf;
 
+#[derive(Debug)]
+pub struct ReconciliationState {
+    pub operation_id: String,
+    pub code: u32,
+    pub destination: PathBuf,
+    pub replacement: PathBuf,
+    pub capture: PathBuf,
+    pub journal: PathBuf,
+    pub context: String,
+}
+
+impl std::fmt::Display for ReconciliationState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "operation={}, code={}, destination={}, replacement={}, capture={}, journal={}, context={}",
+            self.operation_id,
+            self.code,
+            self.destination.display(),
+            self.replacement.display(),
+            self.capture.display(),
+            self.journal.display(),
+            self.context
+        )
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {
     #[error("invalid_path: {path}: {reason}")]
@@ -40,15 +67,8 @@ pub enum BackupError {
         original: Box<BackupError>,
         rollback: Box<BackupError>,
     },
-    #[error(
-        "replace_reconciliation_required: code={code}, destination={destination}, replacement={replacement}, capture={capture}"
-    )]
-    ReconciliationRequired {
-        code: u32,
-        destination: PathBuf,
-        replacement: PathBuf,
-        capture: PathBuf,
-    },
+    #[error("replace_reconciliation_required: {state}")]
+    ReconciliationRequired { state: Box<ReconciliationState> },
     #[error("durability_unavailable: {path}: {source}")]
     DurabilityUnavailable {
         path: PathBuf,

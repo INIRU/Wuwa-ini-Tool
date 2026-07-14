@@ -21,10 +21,10 @@ use crate::ini_document::MergePreview;
 
 use model::{BackupMetadata, StoredBackup, METADATA_SCHEMA_VERSION};
 
-pub use error::BackupError;
+pub use error::{BackupError, ReconciliationState};
 pub use model::{
-    ApplyReason, ApplyResult, BackupEntry, BackupRecord, OriginalAttributes, RestoreResult,
-    SourceExpectation,
+    ApplyReason, ApplyResult, BackupEntry, BackupIntegrity, BackupRecord, OriginalAttributes,
+    RestoreResult, SourceExpectation,
 };
 
 const METADATA_FILE_NAME: &str = "metadata.json";
@@ -98,7 +98,7 @@ impl BackupStore {
             // no-write-sharing handle only after the final pre-commit check; the
             // atomic capture fingerprint reconciles any race after this point.
             snapshot.release_write_exclusion();
-            let applied_sha256 = atomic::write_verified_from_backup(
+            let applied = atomic::write_verified_from_backup(
                 &snapshot.path,
                 &preview.after,
                 &snapshot.attributes,
@@ -111,7 +111,8 @@ impl BackupStore {
             Ok(ApplyResult {
                 backup: backup.backup,
                 backup_path: backup.backup_path,
-                applied_sha256,
+                applied_sha256: applied.sha256,
+                cleanup_pending: applied.cleanup_pending,
             })
         })
     }
@@ -135,16 +136,7 @@ impl BackupStore {
                 .ok_or_else(|| BackupError::BackupNotFound(backup_id.to_owned()))?;
             let target_path = self.resolve_backup_path(&identity.path, &target.file_name)?;
             validate_regular_owned_file(&target_path, "backup_must_be_a_regular_file")?;
-            let target_bytes = fs::read(&target_path)
-                .map_err(|error| BackupError::io("read_backup", &target_path, error))?;
-            let target_hash = atomic::sha256_hex(&target_bytes);
-            if target_hash != target.record.sha256 {
-                return Err(BackupError::HashMismatch {
-                    path: target_path,
-                    expected: target.record.sha256,
-                    actual: target_hash,
-                });
-            }
+            let target_bytes = atomic::read_verified_bytes(&target_path, &target.record.sha256)?;
 
             let mut current = self.read_expected_source(&identity, &expectation)?;
             let operation_backup = current
@@ -156,7 +148,7 @@ impl BackupStore {
                 snapshot.release_write_exclusion();
             }
 
-            let applied_sha256 = match &operation_backup {
+            let applied = match &operation_backup {
                 Some(backup) => atomic::write_verified_from_backup(
                     &identity.path,
                     &target_bytes,
@@ -182,7 +174,8 @@ impl BackupStore {
                 backup: operation_backup.as_ref().map(|entry| entry.backup.clone()),
                 backup_path: operation_backup.map(|entry| entry.backup_path),
                 restored_from: target.record,
-                applied_sha256,
+                applied_sha256: applied.sha256,
+                cleanup_pending: applied.cleanup_pending,
             })
         })
     }
@@ -197,9 +190,11 @@ impl BackupStore {
                 .map(|stored| {
                     let backup_path =
                         self.resolve_backup_path(&identity.path, &stored.file_name)?;
+                    let integrity = backup_integrity(&backup_path, &stored.record.sha256);
                     Ok(BackupEntry {
                         backup: stored.record,
                         backup_path,
+                        integrity,
                     })
                 })
                 .collect::<Result<Vec<_>, BackupError>>()?;
@@ -355,6 +350,7 @@ impl BackupStore {
         Ok(BackupEntry {
             backup_path: self.resolve_backup_path(&snapshot.path, &requested.file_name)?,
             backup: requested.record,
+            integrity: BackupIntegrity::Verified,
         })
     }
 
@@ -490,19 +486,6 @@ impl BackupStore {
             fs::read(&path).map_err(|error| BackupError::io("read_metadata", &path, error))?;
         let metadata: BackupMetadata = serde_json::from_slice(&bytes)?;
         validate_metadata(source, &metadata)?;
-        let directory = path.parent().expect("metadata path has a parent");
-        for stored in &metadata.records {
-            let backup_path = directory.join(&stored.file_name);
-            validate_regular_owned_file(&backup_path, "backup_must_be_a_regular_file")?;
-            let actual = atomic::hash_file(&backup_path)?;
-            if actual != stored.record.sha256 {
-                return Err(BackupError::HashMismatch {
-                    path: backup_path,
-                    expected: stored.record.sha256.clone(),
-                    actual,
-                });
-            }
-        }
         Ok(metadata)
     }
 
@@ -520,7 +503,7 @@ impl BackupStore {
                 windows_file_attributes: None,
             }
         };
-        atomic::write_verified(&path, &bytes, &attributes)?;
+        let _ = atomic::write_verified(&path, &bytes, &attributes)?;
         Ok(())
     }
 
@@ -535,6 +518,20 @@ impl BackupStore {
             });
         }
         Ok(path)
+    }
+}
+
+fn backup_integrity(path: &Path, expected: &str) -> BackupIntegrity {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BackupIntegrity::Missing,
+        Err(_) => BackupIntegrity::Corrupt,
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            BackupIntegrity::Corrupt
+        }
+        Ok(_) => match atomic::hash_file(path) {
+            Ok(actual) if actual == expected => BackupIntegrity::Verified,
+            Ok(_) | Err(_) => BackupIntegrity::Corrupt,
+        },
     }
 }
 

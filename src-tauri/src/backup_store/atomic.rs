@@ -1,13 +1,13 @@
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::{BackupError, OriginalAttributes};
+use super::{BackupError, OriginalAttributes, ReconciliationState};
 
 #[cfg(any(windows, test))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,6 +56,46 @@ struct FileFingerprint {
 struct ReplaceReceipt {
     installed: FileFingerprint,
     capture: Option<PathBuf>,
+    #[cfg(windows)]
+    journal: Option<TransactionJournalHandle>,
+}
+
+#[derive(Debug)]
+pub(crate) struct AtomicWriteResult {
+    pub(crate) sha256: String,
+    pub(crate) cleanup_pending: Option<PathBuf>,
+}
+
+const TRANSACTION_JOURNAL_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TransactionPhase {
+    Prepared,
+    Replaced,
+    Ambiguous,
+    CleanupPending,
+    Resolved,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct TransactionJournal {
+    schema_version: u32,
+    operation_id: String,
+    destination_name: String,
+    replacement_name: String,
+    capture_name: String,
+    expected_destination_sha256: String,
+    replacement_sha256: String,
+    phase: TransactionPhase,
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct TransactionJournalHandle {
+    path: PathBuf,
+    record: TransactionJournal,
 }
 
 #[cfg(windows)]
@@ -174,7 +214,10 @@ impl WindowsReadonlyGuard {
                 actual: "readonly_handle_identity_changed".to_owned(),
             });
         }
-        set_windows_basic_info(&self.file, &self.path, &self.original)
+        set_windows_basic_info(&self.file, &self.path, &self.original)?;
+        self.file
+            .sync_all()
+            .map_err(|error| BackupError::io("flush_readonly_restore", &self.path, error))
     }
 }
 
@@ -290,11 +333,9 @@ pub(crate) fn write_verified(
     destination: &Path,
     bytes: &[u8],
     attributes: &OriginalAttributes,
-) -> Result<String, BackupError> {
+) -> Result<AtomicWriteResult, BackupError> {
     let rollback = if destination.exists() {
-        let fingerprint = fingerprint_file(destination)?;
-        let previous = fs::read(destination)
-            .map_err(|error| BackupError::io("read_rollback_source", destination, error))?;
+        let (previous, fingerprint) = read_fingerprinted_file(destination)?;
         RollbackSource::Bytes {
             sha256: sha256_hex(&previous),
             identity: fingerprint.identity,
@@ -315,7 +356,7 @@ pub(crate) fn write_verified_from_backup(
     backup_sha256: &str,
     expected_identity: (u64, u64),
     backup_attributes: &OriginalAttributes,
-) -> Result<String, BackupError> {
+) -> Result<AtomicWriteResult, BackupError> {
     write_verified_with_post_replace(
         destination,
         bytes,
@@ -334,7 +375,7 @@ pub(crate) fn write_verified_if_missing(
     destination: &Path,
     bytes: &[u8],
     attributes: &OriginalAttributes,
-) -> Result<String, BackupError> {
+) -> Result<AtomicWriteResult, BackupError> {
     scavenge_owned_temps(destination)?;
     let temporary = owned_temporary_path(destination, "tmp")?;
     let written_hash = match write_new_verified(&temporary, bytes) {
@@ -359,7 +400,9 @@ pub(crate) fn write_verified_if_missing(
             return Err(BackupError::io("install_new", destination, error));
         }
     }
-    cleanup_temporary(&temporary)?;
+    let cleanup_pending = cleanup_temporary(&temporary)
+        .err()
+        .map(|_| temporary.clone());
 
     let after_install = persist_attributes_and_flush(destination, attributes).and_then(|()| {
         let actual = hash_file(destination)?;
@@ -373,7 +416,10 @@ pub(crate) fn write_verified_if_missing(
         Ok(actual)
     });
     match after_install {
-        Ok(hash) => Ok(hash),
+        Ok(hash) => Ok(AtomicWriteResult {
+            sha256: hash,
+            cleanup_pending,
+        }),
         Err(original) => match rollback_installed_file(destination, &installed_fingerprint) {
             Ok(()) => Err(original),
             Err(rollback) => Err(BackupError::Unrecoverable {
@@ -390,7 +436,7 @@ fn write_verified_with_post_replace<F>(
     attributes: &OriginalAttributes,
     rollback: RollbackSource,
     post_replace: F,
-) -> Result<String, BackupError>
+) -> Result<AtomicWriteResult, BackupError>
 where
     F: FnOnce(&Path) -> std::io::Result<()>,
 {
@@ -438,8 +484,11 @@ where
 
     match after_replace {
         Ok(hash) => {
-            cleanup_capture(receipt.capture.as_deref())?;
-            Ok(hash)
+            let cleanup_pending = finalize_replace_receipt(receipt);
+            Ok(AtomicWriteResult {
+                sha256: hash,
+                cleanup_pending,
+            })
         }
         Err(original) => match rollback_destination(destination, &rollback, &receipt) {
             Ok(()) => Err(original),
@@ -448,6 +497,36 @@ where
                 rollback: Box::new(rollback),
             }),
         },
+    }
+}
+
+fn finalize_replace_receipt(receipt: ReplaceReceipt) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let mut receipt = receipt;
+        let Some(mut journal) = receipt.journal.take() else {
+            return None;
+        };
+        if update_transaction_phase(&mut journal, TransactionPhase::CleanupPending).is_err() {
+            return Some(journal.path);
+        }
+        if cleanup_capture(receipt.capture.as_deref()).is_err() {
+            return Some(journal.path);
+        }
+        if update_transaction_phase(&mut journal, TransactionPhase::Resolved).is_err() {
+            return Some(journal.path);
+        }
+        if cleanup_temporary(&journal.path).is_err() || sync_parent(&journal.path).is_err() {
+            return Some(journal.path);
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        match cleanup_capture(receipt.capture.as_deref()) {
+            Ok(()) => None,
+            Err(_) => receipt.capture,
+        }
     }
 }
 
@@ -470,6 +549,18 @@ fn rollback_destination(
                 actual: format!("captured:{captured:?}"),
             });
         }
+        #[cfg(windows)]
+        {
+            let rollback_receipt = replace_file_windows_transaction(
+                destination,
+                capture,
+                &receipt.installed,
+                &expected,
+                true,
+            )?;
+            let _ = finalize_replace_receipt(rollback_receipt);
+        }
+        #[cfg(not(windows))]
         restore_capture_platform(capture, destination)?;
         persist_attributes_and_flush(destination, rollback_attributes(rollback)?)?;
         let restored = fingerprint_file(destination)?;
@@ -496,8 +587,7 @@ fn rollback_destination(
             identity: _,
             attributes,
         } => {
-            let bytes = fs::read(path)
-                .map_err(|error| BackupError::io("read_rollback_backup", path, error))?;
+            let bytes = read_verified_bytes(path, sha256)?;
             restore_present(destination, &bytes, sha256, attributes)
         }
         RollbackSource::Bytes {
@@ -594,6 +684,7 @@ pub(crate) fn scavenge_owned_temps(destination: &Path) -> Result<(), BackupError
             reason: "destination_has_no_file_name",
         })?;
     let prefix = format!(".{file_name}.");
+    detect_unresolved_transaction(destination, parent, &prefix)?;
     for entry in
         fs::read_dir(parent).map_err(|error| BackupError::io("scan_temporary", parent, error))?
     {
@@ -608,7 +699,9 @@ pub(crate) fn scavenge_owned_temps(destination: &Path) -> Result<(), BackupError
             continue;
         };
         let canonical_id = Uuid::parse_str(id).is_ok_and(|parsed| parsed.to_string() == id);
-        if !matches!(extension, "tmp" | "rollback" | "capture") || !canonical_id {
+        // Capture and rollback artifacts are recovery evidence. They are removed
+        // only by the transaction that owns a resolved durable journal.
+        if extension != "tmp" || !canonical_id {
             continue;
         }
         let path = entry.path();
@@ -623,6 +716,261 @@ pub(crate) fn scavenge_owned_temps(destination: &Path) -> Result<(), BackupError
         remove_owned_temp_with_hook(&path, |_| Ok(()))?;
     }
     sync_parent(destination)
+}
+
+fn detect_unresolved_transaction(
+    destination: &Path,
+    parent: &Path,
+    prefix: &str,
+) -> Result<(), BackupError> {
+    for entry in
+        fs::read_dir(parent).map_err(|error| BackupError::io("scan_journal", parent, error))?
+    {
+        let entry = entry.map_err(|error| BackupError::io("read_journal_entry", parent, error))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(suffix) = name.strip_prefix(prefix) else {
+            continue;
+        };
+        let Some(operation_id) = suffix.strip_suffix(".journal") else {
+            continue;
+        };
+        if !Uuid::parse_str(operation_id).is_ok_and(|parsed| parsed.to_string() == operation_id) {
+            return Err(BackupError::InvalidPath {
+                path: entry.path(),
+                reason: "recovery_journal_id_must_be_a_canonical_uuid",
+            });
+        }
+        let journal_path = entry.path();
+        let metadata = fs::symlink_metadata(&journal_path)
+            .map_err(|error| BackupError::io("journal_metadata", &journal_path, error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(BackupError::InvalidPath {
+                path: journal_path,
+                reason: "recovery_journal_must_be_a_regular_file",
+            });
+        }
+        let bytes = fs::read(&journal_path)
+            .map_err(|error| BackupError::io("read_recovery_journal", &journal_path, error))?;
+        let journal: TransactionJournal = serde_json::from_slice(&bytes)?;
+        validate_transaction_journal(destination, &journal_path, &journal)?;
+        if journal.phase == TransactionPhase::Resolved {
+            remove_owned_temp_with_hook(&journal_path, |_| Ok(()))?;
+            continue;
+        }
+        return Err(reconciliation_from_journal(
+            destination,
+            &journal_path,
+            &journal,
+            0,
+            "unresolved durable transaction journal",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transaction_journal(
+    destination: &Path,
+    journal_path: &Path,
+    journal: &TransactionJournal,
+) -> Result<(), BackupError> {
+    if journal.schema_version != TRANSACTION_JOURNAL_SCHEMA_VERSION {
+        return Err(BackupError::InvalidMetadata(
+            "unsupported_recovery_journal_version",
+        ));
+    }
+    let parsed = Uuid::parse_str(&journal.operation_id)
+        .map_err(|_| BackupError::InvalidMetadata("recovery_journal_operation_id_invalid"))?;
+    if parsed.to_string() != journal.operation_id {
+        return Err(BackupError::InvalidMetadata(
+            "recovery_journal_operation_id_not_canonical",
+        ));
+    }
+    let expected_journal_name = format!(
+        ".{}.{}.journal",
+        destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| BackupError::InvalidPath {
+                path: destination.to_path_buf(),
+                reason: "destination_has_no_file_name",
+            })?,
+        journal.operation_id
+    );
+    if journal_path.file_name().and_then(|name| name.to_str()) != Some(&expected_journal_name) {
+        return Err(BackupError::InvalidPath {
+            path: journal_path.to_path_buf(),
+            reason: "recovery_journal_name_mismatch",
+        });
+    }
+    for artifact in [
+        &journal.destination_name,
+        &journal.replacement_name,
+        &journal.capture_name,
+    ] {
+        let path = Path::new(artifact);
+        let mut components = path.components();
+        if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+            || components.next().is_some()
+            || artifact.contains(':')
+        {
+            return Err(BackupError::InvalidPath {
+                path: PathBuf::from(artifact),
+                reason: "recovery_journal_artifact_must_be_a_file_name",
+            });
+        }
+    }
+    if destination.file_name().and_then(|name| name.to_str())
+        != Some(journal.destination_name.as_str())
+    {
+        return Err(BackupError::InvalidPath {
+            path: destination.to_path_buf(),
+            reason: "recovery_journal_destination_mismatch",
+        });
+    }
+    for hash in [
+        &journal.expected_destination_sha256,
+        &journal.replacement_sha256,
+    ] {
+        if hash.len() != 64
+            || !hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(BackupError::InvalidMetadata(
+                "recovery_journal_hash_invalid",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn reconciliation_from_journal(
+    destination: &Path,
+    journal_path: &Path,
+    journal: &TransactionJournal,
+    code: u32,
+    context: impl Into<String>,
+) -> BackupError {
+    let parent = destination.parent().unwrap_or_else(|| Path::new(""));
+    BackupError::ReconciliationRequired {
+        state: Box::new(ReconciliationState {
+            operation_id: journal.operation_id.clone(),
+            code,
+            destination: destination.to_path_buf(),
+            replacement: parent.join(&journal.replacement_name),
+            capture: parent.join(&journal.capture_name),
+            journal: journal_path.to_path_buf(),
+            context: context.into(),
+        }),
+    }
+}
+
+#[cfg(windows)]
+fn create_transaction_journal(
+    destination: &Path,
+    replacement: &Path,
+    capture: &Path,
+    operation_id: Uuid,
+    expected: &FileFingerprint,
+    installed: &FileFingerprint,
+) -> Result<TransactionJournalHandle, BackupError> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| BackupError::InvalidPath {
+            path: destination.to_path_buf(),
+            reason: "destination_has_no_parent",
+        })?;
+    let destination_name = path_file_name(destination)?;
+    let record = TransactionJournal {
+        schema_version: TRANSACTION_JOURNAL_SCHEMA_VERSION,
+        operation_id: operation_id.to_string(),
+        destination_name: destination_name.clone(),
+        replacement_name: path_file_name(replacement)?,
+        capture_name: path_file_name(capture)?,
+        expected_destination_sha256: expected.sha256.clone(),
+        replacement_sha256: installed.sha256.clone(),
+        phase: TransactionPhase::Prepared,
+    };
+    let path = parent.join(format!(".{destination_name}.{operation_id}.journal"));
+    validate_transaction_journal(destination, &path, &record)?;
+    let handle = TransactionJournalHandle { path, record };
+    persist_transaction_journal(&handle, true)?;
+    Ok(handle)
+}
+
+#[cfg(windows)]
+fn path_file_name(path: &Path) -> Result<String, BackupError> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .ok_or_else(|| BackupError::InvalidPath {
+            path: path.to_path_buf(),
+            reason: "transaction_artifact_has_no_utf8_file_name",
+        })
+}
+
+#[cfg(windows)]
+fn persist_transaction_journal(
+    journal: &TransactionJournalHandle,
+    create: bool,
+) -> Result<(), BackupError> {
+    if !create {
+        let metadata = fs::symlink_metadata(&journal.path)
+            .map_err(|error| BackupError::io("journal_metadata", &journal.path, error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(BackupError::InvalidPath {
+                path: journal.path.clone(),
+                reason: "recovery_journal_must_be_a_regular_file",
+            });
+        }
+    }
+    let bytes = serde_json::to_vec(&journal.record)?;
+    let mut options = OpenOptions::new();
+    options.write(true);
+    if create {
+        options.create_new(true);
+    } else {
+        options.truncate(true);
+    }
+    let mut file = options
+        .open(&journal.path)
+        .map_err(|error| BackupError::io("open_recovery_journal", &journal.path, error))?;
+    file.write_all(&bytes)
+        .map_err(|error| BackupError::io("write_recovery_journal", &journal.path, error))?;
+    file.sync_all()
+        .map_err(|error| BackupError::io("sync_recovery_journal", &journal.path, error))?;
+    drop(file);
+    sync_parent(&journal.path)
+}
+
+#[cfg(windows)]
+fn update_transaction_phase(
+    journal: &mut TransactionJournalHandle,
+    phase: TransactionPhase,
+) -> Result<(), BackupError> {
+    journal.record.phase = phase;
+    persist_transaction_journal(journal, false)
+}
+
+#[cfg(windows)]
+fn reconciliation_after_call(
+    destination: &Path,
+    journal: &mut TransactionJournalHandle,
+    code: u32,
+    context: impl Into<String>,
+) -> BackupError {
+    let context = context.into();
+    if let Err(error) = update_transaction_phase(journal, TransactionPhase::Ambiguous) {
+        return reconciliation_from_journal(
+            destination,
+            &journal.path,
+            &journal.record,
+            code,
+            format!("{context}; journal_update_error={error}"),
+        );
+    }
+    reconciliation_from_journal(destination, &journal.path, &journal.record, code, context)
 }
 
 fn owned_temporary_path(destination: &Path, extension: &str) -> Result<PathBuf, BackupError> {
@@ -643,10 +991,11 @@ fn owned_temporary_path(destination: &Path, extension: &str) -> Result<PathBuf, 
 }
 
 fn cleanup_temporary(path: &Path) -> Result<(), BackupError> {
-    if !path.exists() {
-        return Ok(());
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(BackupError::io("temporary_metadata", path, error)),
+        Ok(_) => remove_owned_temp_with_hook(path, |_| Ok(())),
     }
-    remove_owned_temp_with_hook(path, |_| Ok(()))
 }
 
 fn remove_owned_temp_with_hook<F>(path: &Path, hook: F) -> Result<(), BackupError>
@@ -926,17 +1275,104 @@ fn delete_file_no_follow(path: &Path, expected_identity: (u64, u64)) -> Result<(
 }
 
 pub(crate) fn hash_file(path: &Path) -> Result<String, BackupError> {
-    let bytes = fs::read(path).map_err(|error| BackupError::io("read", path, error))?;
-    Ok(sha256_hex(&bytes))
+    Ok(fingerprint_file(path)?.sha256)
+}
+
+pub(crate) fn read_verified_bytes(
+    path: &Path,
+    expected_hash: &str,
+) -> Result<Vec<u8>, BackupError> {
+    let (bytes, fingerprint) = read_fingerprinted_file(path)?;
+    if fingerprint.sha256 == expected_hash {
+        Ok(bytes)
+    } else {
+        Err(BackupError::HashMismatch {
+            path: path.to_path_buf(),
+            expected: expected_hash.to_owned(),
+            actual: fingerprint.sha256,
+        })
+    }
 }
 
 fn fingerprint_file(path: &Path) -> Result<FileFingerprint, BackupError> {
-    let metadata =
-        fs::metadata(path).map_err(|error| BackupError::io("fingerprint_metadata", path, error))?;
-    Ok(FileFingerprint {
-        sha256: hash_file(path)?,
-        identity: owned_file_identity(&metadata, path)?,
-    })
+    read_fingerprinted_file(path).map(|(_, fingerprint)| fingerprint)
+}
+
+fn read_fingerprinted_file(path: &Path) -> Result<(Vec<u8>, FileFingerprint), BackupError> {
+    read_fingerprinted_file_with_hook(path, |_| Ok(()))
+}
+
+fn read_fingerprinted_file_with_hook<F>(
+    path: &Path,
+    hook: F,
+) -> Result<(Vec<u8>, FileFingerprint), BackupError>
+where
+    F: FnOnce(&Path) -> std::io::Result<()>,
+{
+    let before = fs::symlink_metadata(path)
+        .map_err(|error| BackupError::io("fingerprint_metadata", path, error))?;
+    if before.file_type().is_symlink() || !before.is_file() {
+        return Err(BackupError::InvalidPath {
+            path: path.to_path_buf(),
+            reason: "fingerprint_source_must_be_a_regular_file",
+        });
+    }
+    let before_identity = owned_file_identity(&before, path)?;
+    let mut file = open_fingerprint_handle(path)?;
+    let handle_metadata = file
+        .metadata()
+        .map_err(|error| BackupError::io("fingerprint_handle_metadata", path, error))?;
+    let handle_identity = owned_file_identity(&handle_metadata, path)?;
+    if handle_identity != before_identity {
+        return Err(BackupError::SourceConflict {
+            expected: format!("fingerprint_identity:{before_identity:?}"),
+            actual: format!("fingerprint_handle:{handle_identity:?}"),
+        });
+    }
+    hook(path).map_err(|error| BackupError::io("fingerprint_hook", path, error))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| BackupError::io("fingerprint_read", path, error))?;
+    let after = fs::symlink_metadata(path)
+        .map_err(|error| BackupError::io("fingerprint_path_recheck", path, error))?;
+    if after.file_type().is_symlink()
+        || !after.is_file()
+        || owned_file_identity(&after, path)? != handle_identity
+    {
+        return Err(BackupError::SourceConflict {
+            expected: format!("fingerprint_handle:{handle_identity:?}"),
+            actual: "fingerprint_path_identity_changed".to_owned(),
+        });
+    }
+    let sha256 = sha256_hex(&bytes);
+    Ok((
+        bytes,
+        FileFingerprint {
+            sha256,
+            identity: handle_identity,
+        },
+    ))
+}
+
+#[cfg(not(windows))]
+fn open_fingerprint_handle(path: &Path) -> Result<File, BackupError> {
+    File::open(path).map_err(|error| BackupError::io("open_fingerprint", path, error))
+}
+
+#[cfg(windows)]
+fn open_fingerprint_handle(path: &Path) -> Result<File, BackupError> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|error| BackupError::io("open_fingerprint_no_follow", path, error))
 }
 
 fn ensure_installed_destination(
@@ -1079,6 +1515,21 @@ fn replace_file_windows(
     expected_old: Option<&FileFingerprint>,
     installed: &FileFingerprint,
 ) -> Result<ReplaceReceipt, BackupError> {
+    let expected_old = expected_old.ok_or_else(|| BackupError::SourceConflict {
+        expected: "present_destination".to_owned(),
+        actual: "missing_expected_fingerprint".to_owned(),
+    })?;
+    replace_file_windows_transaction(destination, replacement, expected_old, installed, true)
+}
+
+#[cfg(windows)]
+fn replace_file_windows_transaction(
+    destination: &Path,
+    replacement: &Path,
+    expected_old: &FileFingerprint,
+    installed: &FileFingerprint,
+    allow_conflict_restore: bool,
+) -> Result<ReplaceReceipt, BackupError> {
     use std::{os::windows::ffi::OsStrExt, ptr};
 
     const ERROR_UNABLE_TO_REMOVE_REPLACED: u32 = 1175;
@@ -1101,12 +1552,31 @@ fn replace_file_windows(
         path.as_os_str().encode_wide().chain(Some(0)).collect()
     }
 
-    let expected_old = expected_old.ok_or_else(|| BackupError::SourceConflict {
-        expected: "present_destination".to_owned(),
-        actual: "missing_expected_fingerprint".to_owned(),
-    })?;
-    let capture = owned_temporary_path(destination, "capture")?;
-    let readonly_guard = clear_readonly_for_replace(destination, expected_old)?;
+    let operation_id = Uuid::new_v4();
+    let destination_name = path_file_name(destination)?;
+    let parent = destination
+        .parent()
+        .ok_or_else(|| BackupError::InvalidPath {
+            path: destination.to_path_buf(),
+            reason: "destination_has_no_parent",
+        })?;
+    let capture = parent.join(format!(".{destination_name}.{operation_id}.capture"));
+    let mut journal = create_transaction_journal(
+        destination,
+        replacement,
+        &capture,
+        operation_id,
+        expected_old,
+        installed,
+    )?;
+    let readonly_guard = match clear_readonly_for_replace(destination, expected_old) {
+        Ok(guard) => guard,
+        Err(error) => {
+            let _ = update_transaction_phase(&mut journal, TransactionPhase::Resolved);
+            let _ = cleanup_temporary(&journal.path);
+            return Err(error);
+        }
+    };
     let destination_wide = wide(destination);
     let replacement_wide = wide(replacement);
     let capture_wide = wide(&capture);
@@ -1135,10 +1605,38 @@ fn replace_file_windows(
         (false, ERROR_UNABLE_TO_MOVE_REPLACEMENT_2) => ReplaceCallState::UnableToMoveReplacement2,
         (false, code) => ReplaceCallState::Other(code),
     };
-    let layout = ReplaceLayout {
-        destination: observe_artifact(destination, expected_old, installed)?,
-        replacement: observe_artifact(replacement, expected_old, installed)?,
-        capture: observe_artifact(&capture, expected_old, installed)?,
+    let invoked_phase = if result != 0 {
+        TransactionPhase::Replaced
+    } else {
+        TransactionPhase::Ambiguous
+    };
+    if let Err(error) = update_transaction_phase(&mut journal, invoked_phase) {
+        return Err(reconciliation_after_call(
+            destination,
+            &mut journal,
+            code,
+            format!("phase update after ReplaceFileW failed: {error}"),
+        ));
+    }
+    let observe = |path: &Path| observe_artifact(path, expected_old, installed);
+    let layout = match (
+        observe(destination),
+        observe(replacement),
+        observe(&capture),
+    ) {
+        (Ok(destination), Ok(replacement), Ok(capture)) => ReplaceLayout {
+            destination,
+            replacement,
+            capture,
+        },
+        observed => {
+            return Err(reconciliation_after_call(
+                destination,
+                &mut journal,
+                code,
+                format!("artifact observation failed after ReplaceFileW: {observed:?}"),
+            ));
+        }
     };
 
     let action = classify_replace(call, layout);
@@ -1146,6 +1644,7 @@ fn replace_file_windows(
         return Ok(ReplaceReceipt {
             installed: installed.clone(),
             capture: Some(capture),
+            journal: Some(journal),
         });
     }
     let result = match action {
@@ -1156,15 +1655,32 @@ fn replace_file_windows(
             std::io::Error::from_raw_os_error(code as i32),
         )),
         ReconcileAction::RestoreCapture => {
-            install_new_file_platform(&capture, destination)
-                .map_err(|error| BackupError::io("restore_partial_capture", destination, error))?;
-            if fingerprint_file(destination)? != *expected_old {
-                return Err(BackupError::ReconciliationRequired {
+            if let Err(error) = install_new_file_platform(&capture, destination) {
+                return Err(reconciliation_after_call(
+                    destination,
+                    &mut journal,
                     code,
-                    destination: destination.to_path_buf(),
-                    replacement: replacement.to_path_buf(),
-                    capture,
-                });
+                    format!("restore partial capture failed: {error}"),
+                ));
+            }
+            match fingerprint_file(destination) {
+                Ok(actual) if actual == *expected_old => {}
+                Ok(actual) => {
+                    return Err(reconciliation_after_call(
+                        destination,
+                        &mut journal,
+                        code,
+                        format!("restored capture mismatch: {actual:?}"),
+                    ));
+                }
+                Err(error) => {
+                    return Err(reconciliation_after_call(
+                        destination,
+                        &mut journal,
+                        code,
+                        format!("restored capture observation failed: {error}"),
+                    ));
+                }
             }
             Err(BackupError::io(
                 "replace_partial_recovered",
@@ -1173,37 +1689,87 @@ fn replace_file_windows(
             ))
         }
         ReconcileAction::RestoreCaptureAndConflict => {
-            authorize_rollback(layout.destination, layout.capture)?;
-            let captured = fingerprint_file(&capture)?;
-            restore_capture_platform(&capture, destination)?;
-            if fingerprint_file(destination)? != captured {
-                return Err(BackupError::ReconciliationRequired {
+            if let Err(error) = authorize_rollback(layout.destination, layout.capture) {
+                return Err(reconciliation_after_call(
+                    destination,
+                    &mut journal,
                     code,
-                    destination: destination.to_path_buf(),
-                    replacement: replacement.to_path_buf(),
-                    capture,
-                });
+                    format!("conflict recovery authorization failed: {error}"),
+                ));
+            }
+            let captured = match fingerprint_file(&capture) {
+                Ok(captured) => captured,
+                Err(error) => {
+                    return Err(reconciliation_after_call(
+                        destination,
+                        &mut journal,
+                        code,
+                        format!("captured external fingerprint failed: {error}"),
+                    ));
+                }
+            };
+            if !allow_conflict_restore {
+                return Err(reconciliation_after_call(
+                    destination,
+                    &mut journal,
+                    code,
+                    "bounded conflict recovery detected a second destination race",
+                ));
+            }
+            let recovery = replace_file_windows_transaction(
+                destination,
+                &capture,
+                installed,
+                &captured,
+                false,
+            );
+            match recovery {
+                Ok(receipt) => {
+                    let _ = finalize_replace_receipt(receipt);
+                }
+                Err(error) => {
+                    return Err(reconciliation_after_call(
+                        destination,
+                        &mut journal,
+                        code,
+                        format!("authoritative external restore failed: {error}"),
+                    ));
+                }
             }
             Err(BackupError::SourceConflict {
                 expected: format!("source_at_preview:{expected_old:?}"),
                 actual: format!("source_at_replace:{captured:?}"),
             })
         }
-        ReconcileAction::PreserveForManualRecovery => Err(BackupError::ReconciliationRequired {
+        ReconcileAction::PreserveForManualRecovery => Err(reconciliation_after_call(
+            destination,
+            &mut journal,
             code,
-            destination: destination.to_path_buf(),
-            replacement: replacement.to_path_buf(),
-            capture,
-        }),
+            format!("unrecognized ReplaceFileW post-state: {layout:?}"),
+        )),
     };
     if let Some(guard) = readonly_guard {
         if let Err(rollback) = guard.restore().and_then(|()| sync_parent(destination)) {
             let original = result.expect_err("non-installed reconciliation must return an error");
-            return Err(BackupError::Unrecoverable {
-                original: Box::new(original),
-                rollback: Box::new(rollback),
-            });
+            return Err(reconciliation_after_call(
+                destination,
+                &mut journal,
+                code,
+                format!(
+                    "post-call recovery failed: original={original}; readonly_restore={rollback}"
+                ),
+            ));
         }
+    }
+    if let Err(error) = update_transaction_phase(&mut journal, TransactionPhase::Resolved)
+        .and_then(|()| cleanup_temporary(&journal.path))
+    {
+        return Err(reconciliation_after_call(
+            destination,
+            &mut journal,
+            code,
+            format!("resolved transaction durability failed: {error}"),
+        ));
     }
     result
 }
@@ -1254,6 +1820,20 @@ fn clear_readonly_for_replace(
         writable.file_attributes = FILE_ATTRIBUTE_NORMAL;
     }
     set_windows_basic_info(&file, path, &writable)?;
+    if let Err(error) = file.sync_all() {
+        let original_error = BackupError::io("flush_readonly_clear", path, error);
+        return match set_windows_basic_info(&file, path, &original).and_then(|()| {
+            file.sync_all().map_err(|error| {
+                BackupError::io("flush_readonly_restore_after_clear_failure", path, error)
+            })
+        }) {
+            Ok(()) => Err(original_error),
+            Err(rollback) => Err(BackupError::Unrecoverable {
+                original: Box::new(original_error),
+                rollback: Box::new(rollback),
+            }),
+        };
+    }
     verify_handle_path_identity(&file, path)?;
     if let Err(original_error) = sync_parent(path) {
         return match set_windows_basic_info(&file, path, &original) {
@@ -1297,12 +1877,6 @@ fn replace_file_simple(destination: &Path, replacement: &Path) -> Result<(), Bac
 #[cfg(not(windows))]
 fn restore_capture_platform(capture: &Path, destination: &Path) -> Result<(), BackupError> {
     replace_file_simple(destination, capture)
-}
-
-#[cfg(windows)]
-fn restore_capture_platform(capture: &Path, destination: &Path) -> Result<(), BackupError> {
-    move_file_replace_write_through(capture, destination)
-        .map_err(|error| BackupError::io("restore_atomic_capture", destination, error))
 }
 
 #[cfg(not(windows))]
@@ -1719,5 +2293,102 @@ mod tests {
             fs::metadata(&target).unwrap().permissions().mode() & 0o777,
             0o444
         );
+    }
+
+    #[test]
+    fn unresolved_journal_prevents_retry_from_deleting_the_only_capture() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("Engine.ini");
+        let operation_id = uuid::Uuid::new_v4();
+        let capture_name = format!(".Engine.ini.{operation_id}.capture");
+        let capture = directory.path().join(&capture_name);
+        let journal = directory
+            .path()
+            .join(format!(".Engine.ini.{operation_id}.journal"));
+        fs::write(&capture, b"external-only-copy").unwrap();
+        fs::write(
+            &journal,
+            format!(
+                "{{\"schema_version\":1,\"operation_id\":\"{operation_id}\",\"destination_name\":\"Engine.ini\",\"replacement_name\":\".Engine.ini.{operation_id}.tmp\",\"capture_name\":\"{capture_name}\",\"expected_destination_sha256\":\"{}\",\"replacement_sha256\":\"{}\",\"phase\":\"ambiguous\"}}",
+                "a".repeat(64),
+                "b".repeat(64)
+            ),
+        )
+        .unwrap();
+
+        let result = scavenge_owned_temps(&destination);
+
+        assert!(matches!(
+            result,
+            Err(BackupError::ReconciliationRequired { .. })
+        ));
+        assert_eq!(fs::read(capture).unwrap(), b"external-only-copy");
+    }
+
+    #[test]
+    fn tampered_recovery_journal_path_traversal_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("Engine.ini");
+        let operation_id = uuid::Uuid::new_v4();
+        let journal = directory
+            .path()
+            .join(format!(".Engine.ini.{operation_id}.journal"));
+        fs::write(
+            &journal,
+            format!(
+                "{{\"schema_version\":1,\"operation_id\":\"{operation_id}\",\"destination_name\":\"Engine.ini\",\"replacement_name\":\".Engine.ini.{operation_id}.tmp\",\"capture_name\":\"../outside.ini\",\"expected_destination_sha256\":\"{}\",\"replacement_sha256\":\"{}\",\"phase\":\"ambiguous\"}}",
+                "a".repeat(64),
+                "b".repeat(64)
+            ),
+        )
+        .unwrap();
+
+        let result = scavenge_owned_temps(&destination);
+
+        assert!(matches!(
+            result,
+            Err(BackupError::InvalidPath {
+                reason: "recovery_journal_artifact_must_be_a_file_name",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn fingerprint_rejects_path_swapped_after_handle_open() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("Engine.ini");
+        let external = directory.path().join("external.ini");
+        fs::write(&path, b"expected").unwrap();
+        fs::write(&external, b"external").unwrap();
+
+        let result = read_fingerprinted_file_with_hook(&path, |opened_path| {
+            fs::remove_file(opened_path)?;
+            fs::rename(&external, opened_path)
+        });
+
+        assert!(matches!(result, Err(BackupError::SourceConflict { .. })));
+        assert_eq!(fs::read(path).unwrap(), b"external");
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn committed_write_reports_pending_cleanup_instead_of_failing() {
+        let directory = tempfile::tempdir().unwrap();
+        let capture = directory
+            .path()
+            .join(format!(".Engine.ini.{}.capture", uuid::Uuid::new_v4()));
+        fs::create_dir(&capture).unwrap();
+        let receipt = ReplaceReceipt {
+            installed: FileFingerprint {
+                sha256: sha256_hex(b"installed"),
+                identity: (1, 1),
+            },
+            capture: Some(capture.clone()),
+        };
+
+        let pending = finalize_replace_receipt(receipt);
+
+        assert_eq!(pending, Some(capture));
     }
 }
