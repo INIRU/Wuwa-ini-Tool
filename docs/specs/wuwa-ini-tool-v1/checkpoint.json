@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "spec": "wuwa-ini-tool-v1",
-  "status": "design-approved",
-  "currentGate": "implementation-plan",
+  "status": "plan-approved",
+  "currentGate": "implementation",
   "updatedAt": "2026-07-14T00:00:00+09:00",
   "decisions": [
     "React TypeScript Vite plus Rust in Tauri v2",
@@ -24,5 +24,5 @@
     "release-security-researcher": "completed",
     "engine-ini-evidence-researcher": "completed"
   },
-  "next": "Write and validate the implementation plan"
+  "next": "Execute the implementation plan with test-first task gates"
 }
