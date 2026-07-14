@@ -350,7 +350,9 @@ fn community_reported_option_cannot_enter_verified_builtin_preset() {
 
 Add cases for bilingual text presence, source URL, tested version/date,
 range/type validation, schema-version rejection, safe filename export, unknown
-profile key rejection, and CPU/priority round-trip.
+profile key rejection, CPU/priority round-trip, bounded import size, portable
+export with no absolute path/backup/device fields, and non-destructive name
+collision handling.
 
 - [ ] **Step 2: Run RED**
 
@@ -365,7 +367,10 @@ Ship complete Vanilla and CPU profiles. Balanced, Performance, and Visual
 Quality exist as valid named built-ins but contain only entries whose evidence
 meets `verified`; if no such non-default entry is independently supported, the
 preset remains intentionally conservative and its bilingual description says
-so. Never copy third-party descriptions or configs.
+so. Never copy third-party descriptions or configs. Export a versioned portable
+share envelope with provenance and creating app version. Import validates but
+does not save or apply until a separate explicit call; a name collision returns
+a stable conflict that leaves the existing profile unchanged.
 
 - [ ] **Step 4: Run GREEN and JSON schema checks**
 
@@ -431,6 +436,8 @@ candidate only when its canonical executable ends in
 `Client/Saved/Config/WindowsNoEditor/Engine.ini` in that same game tree.
 Manual selection must pass the identical validator. A `%LOCALAPPDATA%` config
 is never an automatic write target and the app must not update two configs.
+`UserEngine.ini` and other alternate configuration filenames are rejected and
+never created; only the derived `Engine.ini` leaf is accepted.
 Store canonical paths and compare process images against the configured exact
 executable path before applying settings. Never perform an unbounded drive scan.
 
@@ -623,7 +630,8 @@ it.each(['high', 'realtime'])('shows an accessible warning for %s', async (prior
 Add tests for first-run acknowledgement, external-change conflict, game-running
 write lock, raw-editor accordion, custom profile save/import error, restore
 preview, bilingual switch, theme, close-to-tray copy, loading/empty/error
-states, updater prompt, and keyboard navigation.
+states, updater prompt, keyboard navigation, portable profile export, untrusted
+import preview, and non-destructive profile-name collision handling.
 
 - [ ] **Step 2: Run RED**
 
@@ -638,7 +646,9 @@ Use a route-less local page state because this is one desktop window. Keep
 command calls only in `src/api/commands.ts`; keep pending preview tokens in app
 state; disable Apply until a current preview exists. Use individual Lucide
 imports. Render High/Realtime tooltips on hover, focus, and click. Use original
-copy, never copied third-party option descriptions.
+copy, never copied third-party option descriptions. Imported profiles are
+previewed and saved under an available user-confirmed name; they are never
+applied automatically.
 
 - [ ] **Step 4: Run GREEN, typecheck, and production build**
 

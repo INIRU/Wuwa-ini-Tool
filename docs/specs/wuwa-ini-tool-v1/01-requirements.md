@@ -27,6 +27,9 @@ Source design: `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`
   apply or restore.
 - REQ-INI-006: Provide a keyboard-accessible accordion raw editor whose changes
   use the same diff and backup transaction.
+- REQ-INI-007: Edit only the actual `Engine.ini` derived from the validated
+  game's `Client` tree; never create or write `UserEngine.ini` or another
+  alternate configuration file as a bypass.
 
 ## Catalog and Profiles
 
@@ -38,6 +41,10 @@ Source design: `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`
   profiles without promoting unsupported claims as verified.
 - REQ-CAT-004: Save, load, clone, rename, import, and export validated custom
   profiles including managed INI and CPU settings.
+- REQ-CAT-005: Use a portable versioned profile-sharing format that excludes
+  local paths, backups, and device identifiers; validate untrusted imports,
+  preview them before saving or applying, and resolve name collisions without
+  overwriting an existing profile.
 
 ## CPU and Game Process
 

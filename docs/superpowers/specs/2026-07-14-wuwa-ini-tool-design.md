@@ -80,7 +80,10 @@ filesystem paths.
 
 ### Engine.ini apply
 
-1. Revalidate the configured game executable and `Engine.ini` path.
+1. Revalidate the configured game executable and `Engine.ini` path. The only
+   supported target is `Client/Saved/Config/WindowsNoEditor/Engine.ini` in that
+   validated game tree; never create or write `UserEngine.ini` or another
+   alternate configuration file as a bypass.
 2. Refuse writes while the game process is running.
 3. Read the file bytes and compare the current hash with the last observed
    hash.
@@ -95,6 +98,19 @@ filesystem paths.
 
 An external hash change invalidates a pending apply. The application reloads
 the source and requires a new diff instead of overwriting it.
+
+### Profile sharing
+
+1. Export only versioned profile data: display name, managed INI changes, CPU
+   selection, priority, source/provenance label, and creating app version.
+2. Exclude absolute paths, backup records, machine identifiers, process IDs,
+   and local timestamps that are not required for compatibility.
+3. Treat imported files as untrusted input with size, schema, option, range,
+   CPU, and priority validation.
+4. Show a bilingual import preview and warnings before saving; never apply an
+   imported profile automatically.
+5. On a name collision, offer a validated new name and preserve the existing
+   profile unchanged.
 
 ### Game launch and process control
 
