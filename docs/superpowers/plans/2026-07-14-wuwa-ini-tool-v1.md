@@ -394,7 +394,11 @@ git commit -m "feat: add evidence-aware profiles"
 - Produces: `GameInstallation { channel, root, executable, engine_ini }`, `discover_installations()`, `validate_game_executable(path)`, `derive_engine_ini(path)`.
 - Consumes: standard filesystem and target-specific registry access.
 
-- [ ] **Step 1: Write failing path tests**
+- [ ] **Step 1: Add compile-only discovery stubs, then write failing path tests**
+
+Create the public discovery models and function signatures first. The stubs
+must compile, return `unsupported_platform` or `NotImplemented` as appropriate,
+and must not inspect arbitrary filesystem locations or the registry.
 
 ```rust
 #[test]
@@ -411,7 +415,8 @@ case-insensitive Windows filename, and manual selection cases.
 - [ ] **Step 2: Run RED**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml --test game_discovery`  
-Expected: FAIL because the module is missing.
+Expected: tests compile and execute, then FAIL at path behavior assertions
+because the compile-only validator does not recognize a valid fixture.
 
 - [ ] **Step 3: Implement discovery with validated candidates**
 
@@ -444,7 +449,11 @@ git commit -m "feat: add safe game discovery"
 - Produces: `ProcessController::{topology,apply,readback}`, `PriorityClass`, `CpuSelection`, `ApplyReport`, and a Windows-only fixture process.
 - Consumes: validated PID/path from Task 6; Microsoft `windows` APIs.
 
-- [ ] **Step 1: Write failing pure validation tests**
+- [ ] **Step 1: Add compile-only process-control stubs, then write failing pure validation tests**
+
+Create the public model, wire conversion, controller, and validation signatures
+first. Stubs must compile, keep `Normal` as the declared default, and return a
+deterministic not-implemented/unsupported result without calling OS APIs.
 
 ```rust
 #[test]
@@ -469,7 +478,9 @@ and unsupported platform.
 - [ ] **Step 2: Run RED**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml --test process_control`  
-Expected: FAIL because process control is missing.
+Expected: tests compile and execute, then FAIL at mapping/validation behavior
+assertions because the compile-only implementation does not yet round-trip or
+apply selections.
 
 - [ ] **Step 3: Implement pure model/validation, then Windows backend**
 
@@ -506,7 +517,11 @@ git commit -m "feat: add Windows process tuning"
 - Produces typed commands `get_app_snapshot`, `preview_ini`, `apply_ini`, `restore_backup`, `save_profile`, `discover_game`, `launch_game`, `get_cpu_topology`, `apply_process_settings`, and supervisor status events.
 - Consumes: Tasks 3–7.
 
-- [ ] **Step 1: Write failing supervisor and command-validation tests**
+- [ ] **Step 1: Add compile-only supervisor/command stubs, then write failing validation tests**
+
+Create the public state-machine and command DTO/signature surface first. Stubs
+must compile, reject every mutation deterministically, and must not start
+polling, launch a process, or touch user files.
 
 ```rust
 #[test]
@@ -526,7 +541,8 @@ close-to-tray/explicit-quit state tests.
 - [ ] **Step 2: Run RED**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml --test supervisor`  
-Expected: FAIL because supervisor/commands are missing.
+Expected: tests compile and execute, then FAIL at behavior assertions because
+the compile-only supervisor never transitions or applies settings.
 
 - [ ] **Step 3: Implement state machine and least-privilege capabilities**
 
@@ -566,7 +582,12 @@ git commit -m "feat: integrate secure Tauri commands"
 - Produces: all user-visible routes/surfaces and a single typed command adapter.
 - Consumes: Task 2 contracts and Task 8 commands/events.
 
-- [ ] **Step 1: Write failing workflow tests**
+- [ ] **Step 1: Add compile-only UI shells, then write failing workflow tests**
+
+Create only the named component/API exports required for the workflow tests to
+render. Shells may expose semantic headings and controls needed to locate the
+surface, but command adapters return deterministic not-implemented errors and
+no complete workflow behavior is present.
 
 ```tsx
 it('previews a diff before applying a preset', async () => {
@@ -593,7 +614,9 @@ states, updater prompt, and keyboard navigation.
 - [ ] **Step 2: Run RED**
 
 Run: `npm test -- --run`  
-Expected: new workflow tests fail because pages/features are missing.
+Expected: tests import and render the shells, then FAIL at workflow assertions
+because preview, apply, warnings, persistence, and state transitions are not
+implemented.
 
 - [ ] **Step 3: Implement the smallest complete UI against the typed adapter**
 
@@ -678,7 +701,11 @@ git commit -m "feat: add original application branding"
 - Produces: `UpdateService.check()`, explicit `downloadAndInstall`, progress state, defer state, and safe restart.
 - Consumes: Tauri updater/process plugins and write-in-progress state.
 
-- [ ] **Step 1: Write failing updater UX tests**
+- [ ] **Step 1: Add compile-only updater shells, then write failing UX tests**
+
+Create the `UpdateService` and `UpdatePrompt` export/signature surface first.
+The shell must compile, perform no check/download/restart, and show no discovered
+update; it exists only so the tests execute against inert behavior.
 
 ```tsx
 it('never downloads until the user approves the discovered version', async () => {
@@ -697,7 +724,8 @@ and release-note rendering tests.
 - [ ] **Step 2: Run RED**
 
 Run: `npm test -- --run src/features/update`  
-Expected: FAIL because update feature is missing.
+Expected: tests import and render, then FAIL at update discovery/approval
+behavior assertions because the compile-only service and prompt are inert.
 
 - [ ] **Step 3: Implement updater with production HTTPS endpoint and public key**
 
