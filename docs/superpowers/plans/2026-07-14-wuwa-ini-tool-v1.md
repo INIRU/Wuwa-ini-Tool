@@ -332,7 +332,12 @@ git commit -m "feat: add verified config recovery"
 - Produces: `Catalog::load_embedded()`, `ProfileStore::{list,get,save,rename,clone_profile,export,import}`, `OptionStatus`, `ProfilePatch`.
 - Consumes: `ManagedChange` and shared CPU/profile enums.
 
-- [ ] **Step 1: Write failing schema and safety tests**
+- [ ] **Step 1: Add compile-only catalog/profile stubs, then write failing schema and safety tests**
+
+Create the public catalog and profile model/function signatures first, using
+empty in-memory results and deterministic `NotImplemented` validation/store
+errors only. Do not load, persist, or accept a real profile in these stubs.
+This compile-only surface exists solely so behavior tests import and execute.
 
 ```rust
 #[test]
@@ -350,7 +355,9 @@ profile key rejection, and CPU/priority round-trip.
 - [ ] **Step 2: Run RED**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml --test catalog_profiles`  
-Expected: FAIL because modules and JSON do not exist.
+Expected: tests compile and execute, then FAIL at behavior assertions because
+the compile-only validators/store do not yet accept valid catalogs or persist
+profiles.
 
 - [ ] **Step 3: Implement catalog/profile validation and conservative data**
 
