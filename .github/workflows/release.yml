@@ -52,7 +52,9 @@ jobs:
   release:
     name: Build signed updater and create draft
     needs: sbom
-    runs-on: windows-latest
+    # Pin the stable image so release binaries and loader tests do not inherit
+    # preview Visual Studio runtime behavior from windows-latest.
+    runs-on: windows-2022
     environment: release
     steps:
       - name: Check out tagged source

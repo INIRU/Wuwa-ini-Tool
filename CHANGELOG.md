@@ -10,6 +10,15 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Continue Windows clean-VM validation toward the stable `1.0.0` release.
 
+## [1.0.0-beta.5] - 2026-07-15
+
+### Changed
+
+- Pinned Windows CI and release jobs to the stable Windows Server 2022 image
+  instead of the preview Visual Studio environment behind `windows-latest`.
+- Added Windows test-binary execution to the regular CI gate so loader/API
+  incompatibilities fail before a release tag is created.
+
 ## [1.0.0-beta.4] - 2026-07-15
 
 ### Fixed
@@ -56,7 +65,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 `1.0.0` remains unreleased until the clean-Windows, updater-signature,
 installer, backup-preservation, and release-asset gates pass.
 
-[Unreleased]: https://github.com/INIRU/Wuwa-ini-Tool/compare/v1.0.0-beta.4...HEAD
+[Unreleased]: https://github.com/INIRU/Wuwa-ini-Tool/compare/v1.0.0-beta.5...HEAD
+[1.0.0-beta.5]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0-beta.5
 [1.0.0-beta.4]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0-beta.3
 [1.0.0]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0

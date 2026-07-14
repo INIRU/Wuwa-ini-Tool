@@ -90,7 +90,9 @@ jobs:
 
   windows-tauri:
     name: Windows x64 Tauri build
-    runs-on: windows-latest
+    # Pin the stable image so loader/runtime validation is reproducible and is
+    # not coupled to the preview Visual Studio toolchain on windows-latest.
+    runs-on: windows-2022
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -109,6 +111,8 @@ jobs:
           workspaces: src-tauri
       - name: Install locked dependencies
         run: npm ci
+      - name: Run Windows Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
       - name: Build unsigned CI-only NSIS bundle
         shell: pwsh
         run: npm run tauri build -- --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
