@@ -136,6 +136,120 @@
     },
     {
       "section": "SystemSettings",
+      "key": "r.Streaming.PoolSize",
+      "description": {
+        "en": "Sets the upstream Unreal texture-streaming pool size in MB. A value that is too small can increase streaming churn, while a value that is too large can exhaust VRAM. Mobile observations are not safe automatic values for a PC, and WuWa may override this request.",
+        "ko": "상위 Unreal 텍스처 스트리밍 풀 크기를 MB 단위로 요청합니다. 너무 작으면 스트리밍 교체가 늘고 너무 크면 VRAM이 부족해질 수 있습니다. 모바일 관찰값을 PC 자동값으로 사용할 수 없으며 명조가 이 요청을 덮어쓸 수 있습니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": -1, "maximum": 65536, "allowed_values": [] },
+      "risk": "high",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://pqmlmaoxd.github.io/gamedev/analysis/2026/04/12/wuthering-waves-performance-issues.html",
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.ParallelFrustumCull",
+      "description": {
+        "en": "Requests parallel frustum-culling work. Community log analysis reports that WuWa recognizes it, but this app has not independently measured a PC frame-time improvement and it may add scheduling overhead.",
+        "ko": "절두체 컬링 작업의 병렬 처리를 요청합니다. 커뮤니티 로그 분석에서는 명조가 이를 인식한다고 보고하지만, 이 앱은 PC 프레임 타임 개선을 독립적으로 측정하지 않았으며 스케줄링 오버헤드가 늘 수 있습니다."
+      },
+      "value_type": "boolean",
+      "constraints": { "minimum": null, "maximum": null, "allowed_values": ["0", "1"] },
+      "risk": "medium",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://pqmlmaoxd.github.io/gamedev/analysis/2026/04/12/wuthering-waves-performance-issues.html",
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.ParallelOcclusionCull",
+      "description": {
+        "en": "Requests parallel occlusion-culling work. Community log analysis reports that WuWa recognizes it, but effectiveness depends on the scene and game build and has not been independently verified here.",
+        "ko": "오클루전 컬링 작업의 병렬 처리를 요청합니다. 커뮤니티 로그 분석에서는 명조가 이를 인식한다고 보고하지만 효과는 장면과 게임 빌드에 따라 달라지며 여기서는 독립 검증되지 않았습니다."
+      },
+      "value_type": "boolean",
+      "constraints": { "minimum": null, "maximum": null, "allowed_values": ["0", "1"] },
+      "risk": "medium",
+      "status": "community_reported",
+      "evidence": {
+        "source_url": "https://pqmlmaoxd.github.io/gamedev/analysis/2026/04/12/wuthering-waves-performance-issues.html",
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.Streaming.FullyLoadUsedTextures",
+      "description": {
+        "en": "Requests rapid full streaming of used textures, which can raise VRAM and loading pressure. It reportedly worked in older WuWa builds but is now overridden at a higher priority, so file presence is not runtime effect.",
+        "ko": "사용 중인 텍스처를 빠르게 모두 스트리밍하도록 요청하며 VRAM과 로딩 부하가 늘 수 있습니다. 이전 명조 빌드에서는 작동했다고 보고됐지만 현재는 더 높은 우선순위에서 덮어써지므로 파일에 존재해도 런타임 적용을 뜻하지 않습니다."
+      },
+      "value_type": "boolean",
+      "constraints": { "minimum": null, "maximum": null, "allowed_values": ["0", "1"] },
+      "risk": "high",
+      "status": "regressed",
+      "evidence": {
+        "source_url": "https://pqmlmaoxd.github.io/gamedev/analysis/2026/04/12/wuthering-waves-performance-issues.html",
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.Streaming.HLODStrategy",
+      "description": {
+        "en": "Requests an upstream HLOD streaming strategy (0 stream, 1 keep only mip 0 resident, 2 disable HLOD streaming). Community analysis reports that current WuWa code overrides it, and forcing memory-heavy behavior can regress stability.",
+        "ko": "상위 HLOD 스트리밍 전략(0 스트리밍, 1 mip 0만 상주, 2 HLOD 스트리밍 비활성)을 요청합니다. 커뮤니티 분석에서는 현재 명조 코드가 이를 덮어쓴다고 보고하며 메모리를 많이 쓰는 동작을 강제하면 안정성이 나빠질 수 있습니다."
+      },
+      "value_type": "integer",
+      "constraints": { "minimum": 0, "maximum": 2, "allowed_values": ["0", "1", "2"] },
+      "risk": "high",
+      "status": "regressed",
+      "evidence": {
+        "source_url": "https://pqmlmaoxd.github.io/gamedev/analysis/2026/04/12/wuthering-waves-performance-issues.html",
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
+      "key": "r.Streaming.UsingKuroStreamingPriority",
+      "description": {
+        "en": "A Kuro-specific streaming-priority switch reported in current configuration analysis. Its exact retention and loading tradeoffs are proprietary and unverified, so it is offered only as an experimental manual option.",
+        "ko": "현재 설정 분석에서 보고된 Kuro 전용 스트리밍 우선순위 스위치입니다. 정확한 상주 및 로딩 절충 동작은 공개되지 않았고 검증되지 않았으므로 실험적 수동 옵션으로만 제공합니다."
+      },
+      "value_type": "boolean",
+      "constraints": { "minimum": null, "maximum": null, "allowed_values": ["0", "1"] },
+      "risk": "high",
+      "status": "experimental",
+      "evidence": {
+        "source_url": "https://pqmlmaoxd.github.io/gamedev/analysis/2026/04/12/wuthering-waves-performance-issues.html",
+        "tested_game_version": null,
+        "tested_date": null,
+        "tested_hardware": null,
+        "runtime_verified": false
+      }
+    },
+    {
+      "section": "SystemSettings",
       "key": "MaxCPUCores",
       "description": {
         "en": "A community-mentioned Engine.ini CPU key. It is not a verified Windows CPU control and must not replace process CPU Sets or affinity.",

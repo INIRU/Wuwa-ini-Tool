@@ -248,6 +248,38 @@ fn builtin_profiles_exist_and_unverified_non_default_profiles_are_conservative()
 }
 
 #[test]
+fn source_reviewed_streaming_options_are_warning_gated_and_never_builtin() {
+    let catalog = Catalog::load_embedded().unwrap();
+    let expected = [
+        ("r.Streaming.PoolSize", OptionStatus::CommunityReported),
+        ("r.ParallelFrustumCull", OptionStatus::CommunityReported),
+        ("r.ParallelOcclusionCull", OptionStatus::CommunityReported),
+        ("r.Streaming.FullyLoadUsedTextures", OptionStatus::Regressed),
+        ("r.Streaming.HLODStrategy", OptionStatus::Regressed),
+        (
+            "r.Streaming.UsingKuroStreamingPriority",
+            OptionStatus::Experimental,
+        ),
+    ];
+
+    for (key, status) in expected {
+        let option = catalog
+            .options
+            .get(key)
+            .unwrap_or_else(|| panic!("missing source-reviewed option: {key}"));
+        assert_eq!(option.status, status);
+        assert!(!option.evidence.runtime_verified);
+        assert_eq!(option.evidence.tested_game_version, None);
+        assert!(matches!(option.risk, RiskLevel::Medium | RiskLevel::High));
+        assert!(catalog.presets.iter().all(|preset| preset
+            .changes
+            .iter()
+            .filter(|change| change.key == key)
+            .all(|change| preset.id == "vanilla" && change.value.is_none())));
+    }
+}
+
+#[test]
 fn schemas_are_valid_json_and_reject_unknown_safety_fields() {
     let catalog_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../catalog/schema");
     for name in [
