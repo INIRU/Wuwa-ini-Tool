@@ -571,7 +571,7 @@ fn portable_export_and_external_import_preview_do_not_persist_or_leak_internal_f
     let envelope: ProfileShareEnvelope = serde_json::from_slice(&exported.bytes).unwrap();
     let json = String::from_utf8(exported.bytes.clone()).unwrap();
     assert_eq!(envelope.profile.name, "Portable");
-    assert_eq!(envelope.creating_app_version, "1.0.0");
+    assert_eq!(envelope.creating_app_version, env!("CARGO_PKG_VERSION"));
     assert!(!envelope.exported_at.is_empty());
     assert_eq!(envelope.profile.patch.custom_ini_entries.len(), 1);
     assert!(!json.contains("\"id\""));

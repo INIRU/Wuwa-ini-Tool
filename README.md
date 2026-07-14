@@ -53,10 +53,12 @@ promoted into automatic presets without reproducible evidence.
 
 ## Current status
 
-Version `1.0.0` is the first planned public release. Until the repository has a
-published, verified GitHub Release, build from source or use a draft artifact
-only for testing. Release automation intentionally fails if the protected
-updater signing secrets or committed updater public key are missing.
+Version `1.0.0-beta.1` is the first public testing release on the path to the
+stable `1.0.0` release. Beta builds are prereleases: review the release notes,
+keep the automatic backup enabled, and expect behavior to change as Windows and
+hardware-matrix evidence is collected. Release automation intentionally fails
+if protected updater signing secrets or the committed updater public key are
+missing.
 
 ## Build from source
 

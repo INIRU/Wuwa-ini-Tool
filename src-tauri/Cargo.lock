@@ -5219,7 +5219,7 @@ dependencies = [
 
 [[package]]
 name = "wuwa-ini-tool"
-version = "1.0.0"
+version = "1.0.0-beta.1"
 dependencies = [
  "serde",
  "serde_json",

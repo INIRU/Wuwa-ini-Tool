@@ -1,6 +1,6 @@
 [package]
 name = "wuwa-ini-tool"
-version = "1.0.0"
+version = "1.0.0-beta.1"
 description = "A desktop utility for managing Wuthering Waves configuration"
 authors = ["Wuwa ini Tool contributors"]
 edition = "2021"

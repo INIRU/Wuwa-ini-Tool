@@ -126,7 +126,7 @@ jobs:
           releaseBody: |
             This is an automatically generated draft. Do not publish it until the clean-Windows, installer, updater-signature, backup-preservation, and artifact gates pass.
           releaseDraft: true
-          prerelease: false
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           args: --bundles nsis

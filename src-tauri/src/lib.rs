@@ -156,7 +156,13 @@ mod tests {
 
     #[test]
     fn package_version_matches_product_version() {
-        assert_eq!(env!("CARGO_PKG_VERSION"), "1.0.0");
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("Tauri configuration must be valid JSON");
+
+        assert_eq!(
+            config.get("version").and_then(serde_json::Value::as_str),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]
