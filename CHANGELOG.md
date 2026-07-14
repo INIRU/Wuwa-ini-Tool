@@ -10,6 +10,16 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Continue Windows clean-VM validation toward the stable `1.0.0` release.
 
+## [1.0.0-beta.4] - 2026-07-15
+
+### Fixed
+
+- Replaced unstable Windows metadata extensions with stable Win32 handle
+  inspection for backup identity and hard-link/reparse-point validation.
+- Declared the serialized PDH telemetry sampler as thread-movable so Tauri can
+  safely own it behind the runtime supervisor mutex.
+- Completed the first clean GitHub-hosted Windows x64 Tauri and NSIS build.
+
 ## [1.0.0-beta.3] - 2026-07-15
 
 ### Added
@@ -46,6 +56,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 `1.0.0` remains unreleased until the clean-Windows, updater-signature,
 installer, backup-preservation, and release-asset gates pass.
 
-[Unreleased]: https://github.com/INIRU/Wuwa-ini-Tool/compare/v1.0.0-beta.3...HEAD
+[Unreleased]: https://github.com/INIRU/Wuwa-ini-Tool/compare/v1.0.0-beta.4...HEAD
+[1.0.0-beta.4]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0-beta.3
 [1.0.0]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0

@@ -53,7 +53,7 @@ promoted into automatic presets without reproducible evidence.
 
 ## Current status
 
-Version `1.0.0-beta.3` is the first public testing release on the path to the
+Version `1.0.0-beta.4` is the first public testing release on the path to the
 stable `1.0.0` release. Beta builds are prereleases: review the release notes,
 keep the automatic backup enabled, and expect behavior to change as Windows and
 hardware-matrix evidence is collected. Release automation intentionally fails
