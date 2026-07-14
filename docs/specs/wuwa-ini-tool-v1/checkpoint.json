@@ -33,7 +33,17 @@
   "agents": {
     "reference-researcher": "completed",
     "release-security-researcher": "completed",
-    "engine-ini-evidence-researcher": "completed"
+    "engine-ini-evidence-researcher": "completed",
+    "foundation-implementer": "completed",
+    "ini-engine-implementer": "completed",
+    "ini-engine-reviewer": "approved",
+    "ui-contract-implementer": "in-progress",
+    "ui-contract-reviewer": "changes-requested"
   },
-  "next": "Task 2 — shared DTOs, localization, theme, and accessible primitives"
+  "completedTasks": [1, 3],
+  "openMinors": [
+    "Task 1: configure a restrictive CSP before privileged UI commands ship",
+    "Task 3: add a dedicated mixed LF/CRLF terminator preservation regression test"
+  ],
+  "next": "Complete Task 2 accessibility fixes, then Task 4 verified backup and atomic apply"
 }
