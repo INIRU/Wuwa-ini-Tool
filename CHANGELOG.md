@@ -10,7 +10,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - Continue Windows clean-VM validation toward the stable `1.0.0` release.
 
-## [1.0.0-beta.2] - 2026-07-15
+## [1.0.0-beta.3] - 2026-07-15
 
 ### Added
 
@@ -46,6 +46,6 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 `1.0.0` remains unreleased until the clean-Windows, updater-signature,
 installer, backup-preservation, and release-asset gates pass.
 
-[Unreleased]: https://github.com/INIRU/Wuwa-ini-Tool/compare/v1.0.0-beta.2...HEAD
-[1.0.0-beta.2]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0-beta.2
+[Unreleased]: https://github.com/INIRU/Wuwa-ini-Tool/compare/v1.0.0-beta.3...HEAD
+[1.0.0-beta.3]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0-beta.3
 [1.0.0]: https://github.com/INIRU/Wuwa-ini-Tool/releases/tag/v1.0.0
