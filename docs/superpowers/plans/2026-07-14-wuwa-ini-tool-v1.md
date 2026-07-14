@@ -267,13 +267,20 @@ git commit -m "feat: add lossless INI merge engine"
 - Produces: `BackupStore::create`, `BackupStore::apply`, `BackupStore::restore`, `BackupStore::list`, `BackupStore::pin`; `BackupRecord { id, source_path, created_at, sha256, reason, pinned, original_attributes }`.
 - Consumes: `MergePreview` from Task 3.
 
-- [ ] **Step 1: Write failing transactional tests**
+- [ ] **Step 1: Add compile-only API stubs, then write failing transactional tests**
+
+Create the public `backup_store` module shapes and method signatures first.
+The stubs must compile and return a deterministic `BackupError::NotImplemented`;
+they must not perform file I/O. This is only enough surface for behavior tests
+to import and execute the API.
 
 ```rust
 #[test]
 fn apply_creates_verified_backup_before_replace() {
     let fixture = TestStore::new(b"before");
-    let result = fixture.store.apply(fixture.source(), b"after", ApplyReason::Preset).unwrap();
+    let result = fixture.store.apply(fixture.source(), b"after", ApplyReason::Preset);
+    assert!(result.is_ok(), "apply should succeed: {result:?}");
+    let result = result.unwrap();
     assert_eq!(std::fs::read(fixture.source()).unwrap(), b"after");
     assert_eq!(std::fs::read(result.backup_path).unwrap(), b"before");
     assert_eq!(result.backup.sha256, sha256_hex(b"before"));
@@ -287,7 +294,9 @@ unpinned retention, pinned retention, and path traversal rejection.
 - [ ] **Step 2: Run RED**
 
 Run: `cargo test --manifest-path src-tauri/Cargo.toml --test backup_store`  
-Expected: FAIL because `backup_store` is missing.
+Expected: tests compile and execute, then FAIL at behavior assertions because
+the compile-only store returns `BackupError::NotImplemented` and performs no
+transaction.
 
 - [ ] **Step 3: Implement the backup transaction**
 
