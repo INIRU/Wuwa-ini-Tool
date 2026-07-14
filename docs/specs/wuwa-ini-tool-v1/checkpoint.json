@@ -37,13 +37,15 @@
     "foundation-implementer": "completed",
     "ini-engine-implementer": "completed",
     "ini-engine-reviewer": "approved",
-    "ui-contract-implementer": "in-progress",
-    "ui-contract-reviewer": "changes-requested"
+    "ui-contract-implementer": "completed",
+    "ui-contract-reviewer": "approved",
+    "backup-store-implementer": "in-progress"
   },
-  "completedTasks": [1, 3],
+  "completedTasks": [1, 2, 3],
   "openMinors": [
     "Task 1: configure a restrictive CSP before privileged UI commands ship",
+    "Task 2: complete native browser visual, long-copy, and focus QA when a browser backend is available",
     "Task 3: add a dedicated mixed LF/CRLF terminator preservation regression test"
   ],
-  "next": "Complete Task 2 accessibility fixes, then Task 4 verified backup and atomic apply"
+  "next": "Task 4 — verified backup, atomic apply, restore, and retention"
 }
