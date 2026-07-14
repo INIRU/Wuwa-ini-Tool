@@ -32,6 +32,7 @@
 - Create: `src-tauri/Cargo.toml`, `src-tauri/build.rs`, `src-tauri/tauri.conf.json`
 - Create: `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`
 - Create: `src-tauri/capabilities/default.json`, `.gitignore`, `.editorconfig`
+- Create: `src-tauri/icons/icon.png` (minimal build-only placeholder; replaced by Task 10)
 
 **Interfaces:**
 - Produces: `App`, a Tauri library entrypoint `wuwa_ini_tool_lib::run()`, frontend scripts `test`, `typecheck`, `build`, and Rust library tests.
@@ -105,6 +106,9 @@ export function App() {
 ```
 
 Configure `src-tauri/Cargo.toml` as both `rlib` and `staticlib`, Tauri v2 with tray support, `serde`, `serde_json`, `thiserror`, `sha2`, `tempfile`, `uuid`, `time`, and target-specific `windows`. Set all product versions to `1.0.0` and bundle target to `nsis`.
+Add the smallest valid PNG at `src-tauri/icons/icon.png` required by
+`tauri::generate_context!()`; it is not the approved release mark and Task 10
+must replace it with the deterministic bracketed `T` icon set.
 
 - [ ] **Step 4: Verify GREEN and both build systems**
 
@@ -603,7 +607,8 @@ git commit -m "feat: build configuration desktop UI"
 
 **Files:**
 - Create: `assets/brand/wuwa-ini-tool-mark.svg`
-- Create: `src-tauri/icons/icon.png`, `32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.ico`
+- Modify: `src-tauri/icons/icon.png`
+- Create: `src-tauri/icons/32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.ico`
 - Modify: `src/components/AppIcon.tsx`, `src-tauri/tauri.conf.json`
 - Create: `scripts/verify-icons.mjs`
 
