@@ -4,12 +4,18 @@ mod model;
 mod retention;
 
 use std::{
-    fs,
+    collections::{HashMap, HashSet},
+    fs::{self, File},
+    io::Read,
     path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
 };
 
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
+
+#[cfg(windows)]
+use std::fs::OpenOptions;
 
 use crate::ini_document::MergePreview;
 
@@ -18,13 +24,21 @@ use model::{BackupMetadata, StoredBackup, METADATA_SCHEMA_VERSION};
 pub use error::BackupError;
 pub use model::{
     ApplyReason, ApplyResult, BackupEntry, BackupRecord, OriginalAttributes, RestoreResult,
+    SourceExpectation,
 };
 
 const METADATA_FILE_NAME: &str = "metadata.json";
+static SOURCE_LOCKS: OnceLock<Mutex<HashMap<String, Weak<Mutex<()>>>>> = OnceLock::new();
 
 #[derive(Clone, Debug)]
 pub struct BackupStore {
     root: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+struct SourceIdentity {
+    path: PathBuf,
+    lock_key: String,
 }
 
 #[derive(Debug)]
@@ -33,6 +47,14 @@ struct SourceSnapshot {
     bytes: Vec<u8>,
     sha256: String,
     attributes: OriginalAttributes,
+    file_identity: FileIdentity,
+    _handle: File,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FileIdentity {
+    first: u64,
+    second: u64,
 }
 
 impl BackupStore {
@@ -43,8 +65,12 @@ impl BackupStore {
     }
 
     pub fn create(&self, source: &Path, reason: ApplyReason) -> Result<BackupEntry, BackupError> {
-        let snapshot = self.read_source(source)?;
-        self.create_from_snapshot(&snapshot, reason)
+        validate_operation_reason(reason)?;
+        let identity = resolve_source_identity(source)?;
+        with_source_lock(&identity.lock_key, || {
+            let snapshot = self.read_source(&identity)?;
+            self.create_from_snapshot(&snapshot, reason)
+        })
     }
 
     pub fn apply(
@@ -53,76 +79,113 @@ impl BackupStore {
         preview: &MergePreview,
         reason: ApplyReason,
     ) -> Result<ApplyResult, BackupError> {
-        let snapshot = self.read_source(source)?;
-        let expected = atomic::sha256_hex(&preview.before);
-        self.ensure_hash(&snapshot.sha256, &expected)?;
+        validate_operation_reason(reason)?;
+        let identity = resolve_source_identity(source)?;
+        with_source_lock(&identity.lock_key, || {
+            let snapshot = self.read_source(&identity)?;
+            let expected = atomic::sha256_hex(&preview.before);
+            ensure_hash(&snapshot.sha256, &expected)?;
 
-        let backup = self.create_from_snapshot(&snapshot, reason)?;
-        self.ensure_source_unchanged(&snapshot.path, &expected)?;
-        let applied_sha256 =
-            atomic::write_verified(&snapshot.path, &preview.after, &snapshot.attributes)?;
+            let backup = self.create_from_snapshot(&snapshot, reason)?;
+            self.ensure_present_unchanged(&identity, &snapshot, &expected)?;
+            let applied_sha256 = atomic::write_verified_from_backup(
+                &snapshot.path,
+                &preview.after,
+                &snapshot.attributes,
+                &backup.backup_path,
+                &backup.backup.sha256,
+                &backup.backup.original_attributes,
+            )?;
 
-        Ok(ApplyResult {
-            backup: backup.backup,
-            backup_path: backup.backup_path,
-            applied_sha256,
+            Ok(ApplyResult {
+                backup: backup.backup,
+                backup_path: backup.backup_path,
+                applied_sha256,
+            })
         })
     }
 
-    pub fn restore(&self, source: &Path, backup_id: &str) -> Result<RestoreResult, BackupError> {
+    pub fn restore(
+        &self,
+        source: &Path,
+        backup_id: &str,
+        expectation: SourceExpectation,
+    ) -> Result<RestoreResult, BackupError> {
         validate_backup_id(backup_id)?;
-        let snapshot = self.read_source(source)?;
-        let metadata = self.load_metadata(&snapshot.path)?;
-        let target = metadata
-            .records
-            .iter()
-            .find(|stored| stored.record.id == backup_id)
-            .cloned()
-            .ok_or_else(|| BackupError::BackupNotFound(backup_id.to_owned()))?;
-        let target_path = self.resolve_backup_path(&snapshot.path, &target.file_name)?;
-        let target_bytes = fs::read(&target_path)
-            .map_err(|error| BackupError::io("read_backup", &target_path, error))?;
-        let actual_target_hash = atomic::sha256_hex(&target_bytes);
-        if actual_target_hash != target.record.sha256 {
-            return Err(BackupError::HashMismatch {
-                path: target_path,
-                expected: target.record.sha256,
-                actual: actual_target_hash,
-            });
-        }
+        validate_expectation(&expectation)?;
+        let identity = resolve_source_identity(source)?;
+        with_source_lock(&identity.lock_key, || {
+            let metadata = self.load_metadata(&identity.path)?;
+            let target = metadata
+                .records
+                .iter()
+                .find(|stored| stored.record.id == backup_id)
+                .cloned()
+                .ok_or_else(|| BackupError::BackupNotFound(backup_id.to_owned()))?;
+            let target_path = self.resolve_backup_path(&identity.path, &target.file_name)?;
+            validate_regular_owned_file(&target_path, "backup_must_be_a_regular_file")?;
+            let target_bytes = fs::read(&target_path)
+                .map_err(|error| BackupError::io("read_backup", &target_path, error))?;
+            let target_hash = atomic::sha256_hex(&target_bytes);
+            if target_hash != target.record.sha256 {
+                return Err(BackupError::HashMismatch {
+                    path: target_path,
+                    expected: target.record.sha256,
+                    actual: target_hash,
+                });
+            }
 
-        let current_backup = self.create_from_snapshot(&snapshot, ApplyReason::Restore)?;
-        self.ensure_source_unchanged(&snapshot.path, &snapshot.sha256)?;
-        let applied_sha256 = atomic::write_verified(
-            &snapshot.path,
-            &target_bytes,
-            &target.record.original_attributes,
-        )?;
+            let current = self.read_expected_source(&identity, &expectation)?;
+            let operation_backup = current
+                .as_ref()
+                .map(|snapshot| self.create_from_snapshot(snapshot, ApplyReason::Restore))
+                .transpose()?;
+            self.ensure_expectation_unchanged(&identity, current.as_ref(), &expectation)?;
 
-        Ok(RestoreResult {
-            backup: current_backup.backup,
-            backup_path: current_backup.backup_path,
-            restored_from: target.record,
-            applied_sha256,
+            let applied_sha256 = match &operation_backup {
+                Some(backup) => atomic::write_verified_from_backup(
+                    &identity.path,
+                    &target_bytes,
+                    &target.record.original_attributes,
+                    &backup.backup_path,
+                    &backup.backup.sha256,
+                    &backup.backup.original_attributes,
+                )?,
+                None => atomic::write_verified_if_missing(
+                    &identity.path,
+                    &target_bytes,
+                    &target.record.original_attributes,
+                )?,
+            };
+
+            Ok(RestoreResult {
+                backup: operation_backup.as_ref().map(|entry| entry.backup.clone()),
+                backup_path: operation_backup.map(|entry| entry.backup_path),
+                restored_from: target.record,
+                applied_sha256,
+            })
         })
     }
 
     pub fn list(&self, source: &Path) -> Result<Vec<BackupEntry>, BackupError> {
-        let source = validate_source_path(source)?;
-        let mut entries = self
-            .load_metadata(&source)?
-            .records
-            .into_iter()
-            .map(|stored| {
-                let backup_path = self.resolve_backup_path(&source, &stored.file_name)?;
-                Ok(BackupEntry {
-                    backup: stored.record,
-                    backup_path,
+        let identity = resolve_source_identity(source)?;
+        with_source_lock(&identity.lock_key, || {
+            let mut entries = self
+                .load_metadata(&identity.path)?
+                .records
+                .into_iter()
+                .map(|stored| {
+                    let backup_path =
+                        self.resolve_backup_path(&identity.path, &stored.file_name)?;
+                    Ok(BackupEntry {
+                        backup: stored.record,
+                        backup_path,
+                    })
                 })
-            })
-            .collect::<Result<Vec<_>, BackupError>>()?;
-        entries.reverse();
-        Ok(entries)
+                .collect::<Result<Vec<_>, BackupError>>()?;
+            entries.reverse();
+            Ok(entries)
+        })
     }
 
     pub fn pin(
@@ -132,31 +195,105 @@ impl BackupStore {
         pinned: bool,
     ) -> Result<BackupRecord, BackupError> {
         validate_backup_id(backup_id)?;
-        let source = validate_source_path(source)?;
-        let mut metadata = self.load_metadata(&source)?;
-        let record = metadata
-            .records
-            .iter_mut()
-            .find(|stored| stored.record.id == backup_id)
-            .ok_or_else(|| BackupError::BackupNotFound(backup_id.to_owned()))?;
-        record.record.pinned = pinned;
-        let result = record.record.clone();
-        self.save_metadata(&source, &metadata)?;
-        Ok(result)
+        let identity = resolve_source_identity(source)?;
+        with_source_lock(&identity.lock_key, || {
+            let mut metadata = self.load_metadata(&identity.path)?;
+            let record = metadata
+                .records
+                .iter_mut()
+                .find(|stored| stored.record.id == backup_id)
+                .ok_or_else(|| BackupError::BackupNotFound(backup_id.to_owned()))?;
+            record.record.pinned = pinned;
+            let result = record.record.clone();
+            self.save_metadata(&identity.path, &metadata)?;
+            Ok(result)
+        })
     }
 
-    fn read_source(&self, source: &Path) -> Result<SourceSnapshot, BackupError> {
-        let path = validate_source_path(source)?;
-        let bytes =
-            fs::read(&path).map_err(|error| BackupError::io("read_source", &path, error))?;
-        let attributes = read_attributes(&path)?;
-        let sha256 = atomic::sha256_hex(&bytes);
+    fn read_expected_source(
+        &self,
+        identity: &SourceIdentity,
+        expectation: &SourceExpectation,
+    ) -> Result<Option<SourceSnapshot>, BackupError> {
+        match expectation {
+            SourceExpectation::Present(expected) => {
+                let snapshot = self.read_source(identity)?;
+                ensure_hash(&snapshot.sha256, expected)?;
+                Ok(Some(snapshot))
+            }
+            SourceExpectation::Missing => match fs::symlink_metadata(&identity.path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(error) => Err(BackupError::io("source_metadata", &identity.path, error)),
+                Ok(_) => Err(BackupError::SourceConflict {
+                    expected: "missing".to_owned(),
+                    actual: "present".to_owned(),
+                }),
+            },
+        }
+    }
+
+    fn read_source(&self, identity: &SourceIdentity) -> Result<SourceSnapshot, BackupError> {
+        validate_regular_source(&identity.path)?;
+        let mut handle = open_source_locked(&identity.path)?;
+        let handle_metadata = handle
+            .metadata()
+            .map_err(|error| BackupError::io("source_handle_metadata", &identity.path, error))?;
+        validate_link_count_and_reparse(&identity.path, &handle_metadata)?;
+        let file_identity = file_identity(&handle_metadata)?;
+        let mut bytes = Vec::new();
+        handle
+            .read_to_end(&mut bytes)
+            .map_err(|error| BackupError::io("read_source", &identity.path, error))?;
+        let attributes = attributes_from_metadata(&handle_metadata);
         Ok(SourceSnapshot {
-            path,
+            path: identity.path.clone(),
+            sha256: atomic::sha256_hex(&bytes),
             bytes,
-            sha256,
             attributes,
+            file_identity,
+            _handle: handle,
         })
+    }
+
+    fn ensure_present_unchanged(
+        &self,
+        identity: &SourceIdentity,
+        snapshot: &SourceSnapshot,
+        expected: &str,
+    ) -> Result<(), BackupError> {
+        validate_regular_source(&identity.path)?;
+        let metadata = fs::metadata(&identity.path)
+            .map_err(|error| BackupError::io("source_metadata", &identity.path, error))?;
+        if file_identity(&metadata)? != snapshot.file_identity {
+            return Err(BackupError::SourceConflict {
+                expected: "same_file_identity".to_owned(),
+                actual: "replaced_file_identity".to_owned(),
+            });
+        }
+        let actual = atomic::hash_file(&identity.path)?;
+        ensure_hash(&actual, expected)
+    }
+
+    fn ensure_expectation_unchanged(
+        &self,
+        identity: &SourceIdentity,
+        snapshot: Option<&SourceSnapshot>,
+        expectation: &SourceExpectation,
+    ) -> Result<(), BackupError> {
+        match (snapshot, expectation) {
+            (Some(snapshot), SourceExpectation::Present(expected)) => {
+                self.ensure_present_unchanged(identity, snapshot, expected)
+            }
+            (None, SourceExpectation::Missing) => match fs::symlink_metadata(&identity.path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(BackupError::io("source_metadata", &identity.path, error)),
+                Ok(_) => Err(BackupError::SourceConflict {
+                    expected: "missing".to_owned(),
+                    actual: "present".to_owned(),
+                }),
+            },
+            _ => Err(BackupError::InvalidMetadata("expectation_state_mismatch")),
+        }
     }
 
     fn create_from_snapshot(
@@ -164,24 +301,23 @@ impl BackupStore {
         snapshot: &SourceSnapshot,
         reason: ApplyReason,
     ) -> Result<BackupEntry, BackupError> {
-        let directory = self.source_directory(&snapshot.path);
-        fs::create_dir_all(&directory)
-            .map_err(|error| BackupError::io("create_backup_directory", &directory, error))?;
+        let directory = self.source_directory(&snapshot.path, true)?;
         let mut metadata = self.load_metadata(&snapshot.path)?;
+        self.retry_pending_deletions(&snapshot.path, &mut metadata)?;
 
-        let original_index = metadata
+        let original = match metadata
             .records
             .iter()
-            .position(|stored| stored.record.reason == ApplyReason::FirstOriginal);
-        let original = match original_index {
-            Some(index) => metadata.records[index].clone(),
+            .find(|stored| stored.record.reason == ApplyReason::FirstOriginal)
+            .cloned()
+        {
+            Some(stored) => stored,
             None => {
                 let stored = self.write_backup(snapshot, ApplyReason::FirstOriginal)?;
                 metadata.records.push(stored.clone());
                 stored
             }
         };
-
         let requested = if reason == ApplyReason::FirstOriginal {
             original
         } else {
@@ -190,21 +326,53 @@ impl BackupStore {
             stored
         };
 
-        let removed = retention::prune(&mut metadata.records);
+        metadata
+            .pending_deletions
+            .extend(retention::prune(&mut metadata.records));
         self.save_metadata(&snapshot.path, &metadata)?;
-        for file_name in removed {
-            let path = self.resolve_backup_path(&snapshot.path, &file_name)?;
-            if let Err(error) = fs::remove_file(&path) {
-                if error.kind() != std::io::ErrorKind::NotFound {
-                    return Err(BackupError::io("prune_backup", path, error));
-                }
-            }
-        }
+        self.cleanup_pending_nonfatal(&directory, &metadata.pending_deletions);
 
         Ok(BackupEntry {
             backup_path: self.resolve_backup_path(&snapshot.path, &requested.file_name)?,
             backup: requested.record,
         })
+    }
+
+    fn retry_pending_deletions(
+        &self,
+        source: &Path,
+        metadata: &mut BackupMetadata,
+    ) -> Result<(), BackupError> {
+        if metadata.pending_deletions.is_empty() {
+            return Ok(());
+        }
+        let directory = self.source_directory(source, false)?;
+        let mut remaining = Vec::new();
+        for file_name in &metadata.pending_deletions {
+            let path = directory.join(file_name);
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(_) => remaining.push(file_name.clone()),
+            }
+        }
+        if remaining != metadata.pending_deletions {
+            atomic::sync_parent_directory(&directory.join(METADATA_FILE_NAME))?;
+            metadata.pending_deletions = remaining;
+            self.save_metadata(source, metadata)?;
+        }
+        Ok(())
+    }
+
+    fn cleanup_pending_nonfatal(&self, directory: &Path, pending: &[String]) {
+        for file_name in pending {
+            let path = directory.join(file_name);
+            if let Ok(metadata) = fs::symlink_metadata(&path) {
+                if metadata.is_file() && !metadata.file_type().is_symlink() {
+                    let _ = fs::remove_file(path);
+                }
+            }
+        }
     }
 
     fn write_backup(
@@ -224,7 +392,6 @@ impl BackupStore {
         let created_at = OffsetDateTime::now_utc()
             .format(&Rfc3339)
             .expect("RFC 3339 supports every UTC timestamp");
-
         Ok(StoredBackup {
             record: BackupRecord {
                 id,
@@ -241,66 +408,83 @@ impl BackupStore {
         })
     }
 
-    fn ensure_source_unchanged(&self, source: &Path, expected: &str) -> Result<(), BackupError> {
-        let actual = atomic::hash_file(source)?;
-        self.ensure_hash(&actual, expected)
+    fn backup_root(&self) -> Result<PathBuf, BackupError> {
+        fs::create_dir_all(&self.root)
+            .map_err(|error| BackupError::io("create_backup_root", &self.root, error))?;
+        let metadata = fs::symlink_metadata(&self.root)
+            .map_err(|error| BackupError::io("backup_root_metadata", &self.root, error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(BackupError::InvalidPath {
+                path: self.root.clone(),
+                reason: "backup_root_must_be_a_real_directory",
+            });
+        }
+        fs::canonicalize(&self.root)
+            .map_err(|error| BackupError::io("canonicalize_backup_root", &self.root, error))
     }
 
-    fn ensure_hash(&self, actual: &str, expected: &str) -> Result<(), BackupError> {
-        if actual == expected {
-            Ok(())
+    fn source_directory(&self, source: &Path, create: bool) -> Result<PathBuf, BackupError> {
+        let root = self.backup_root()?;
+        let directory = root.join(source_id(source));
+        if create {
+            fs::create_dir_all(&directory)
+                .map_err(|error| BackupError::io("create_backup_directory", &directory, error))?;
+        }
+        if directory.exists() {
+            let metadata = fs::symlink_metadata(&directory)
+                .map_err(|error| BackupError::io("backup_directory_metadata", &directory, error))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(BackupError::InvalidPath {
+                    path: directory,
+                    reason: "backup_directory_must_be_a_real_directory",
+                });
+            }
+            let canonical = fs::canonicalize(&directory).map_err(|error| {
+                BackupError::io("canonicalize_backup_directory", &directory, error)
+            })?;
+            if !canonical.starts_with(&root) {
+                return Err(BackupError::InvalidPath {
+                    path: canonical,
+                    reason: "backup_directory_outside_root",
+                });
+            }
+            Ok(canonical)
         } else {
-            Err(BackupError::SourceConflict {
-                expected: expected.to_owned(),
-                actual: actual.to_owned(),
-            })
+            Ok(directory)
         }
     }
 
-    fn source_directory(&self, source: &Path) -> PathBuf {
-        self.root.join(source_id(source))
-    }
-
-    fn metadata_path(&self, source: &Path) -> PathBuf {
-        self.source_directory(source).join(METADATA_FILE_NAME)
+    fn metadata_path(&self, source: &Path) -> Result<PathBuf, BackupError> {
+        Ok(self
+            .source_directory(source, false)?
+            .join(METADATA_FILE_NAME))
     }
 
     fn load_metadata(&self, source: &Path) -> Result<BackupMetadata, BackupError> {
-        let path = self.metadata_path(source);
+        let path = self.metadata_path(source)?;
         if !path.exists() {
             return Ok(BackupMetadata::new(source.to_path_buf()));
         }
+        validate_regular_owned_file(&path, "metadata_must_be_a_regular_file")?;
         let bytes =
             fs::read(&path).map_err(|error| BackupError::io("read_metadata", &path, error))?;
         let metadata: BackupMetadata = serde_json::from_slice(&bytes)?;
-        if metadata.schema_version != METADATA_SCHEMA_VERSION {
-            return Err(BackupError::UnsupportedMetadataVersion(
-                metadata.schema_version,
-            ));
-        }
-        if metadata.source_path != source {
-            return Err(BackupError::InvalidPath {
-                path,
-                reason: "metadata_source_mismatch",
-            });
-        }
+        validate_metadata(source, &metadata)?;
+        let directory = path.parent().expect("metadata path has a parent");
         for stored in &metadata.records {
-            validate_file_name(&stored.file_name)?;
-            if stored.record.source_path != source {
-                return Err(BackupError::InvalidPath {
-                    path: stored.record.source_path.clone(),
-                    reason: "record_source_mismatch",
-                });
-            }
+            validate_regular_owned_file(
+                &directory.join(&stored.file_name),
+                "backup_must_be_a_regular_file",
+            )?;
         }
         Ok(metadata)
     }
 
     fn save_metadata(&self, source: &Path, metadata: &BackupMetadata) -> Result<(), BackupError> {
-        let path = self.metadata_path(source);
-        let directory = path.parent().expect("metadata path has a parent");
-        fs::create_dir_all(directory)
-            .map_err(|error| BackupError::io("create_metadata_directory", directory, error))?;
+        validate_metadata(source, metadata)?;
+        let path = self
+            .source_directory(source, true)?
+            .join(METADATA_FILE_NAME);
         let bytes = serde_json::to_vec_pretty(metadata)?;
         let attributes = if path.exists() {
             read_attributes(&path)?
@@ -316,35 +500,188 @@ impl BackupStore {
 
     fn resolve_backup_path(&self, source: &Path, file_name: &str) -> Result<PathBuf, BackupError> {
         validate_file_name(file_name)?;
-        Ok(self.source_directory(source).join(file_name))
+        let directory = self.source_directory(source, true)?;
+        let path = directory.join(file_name);
+        if !path.starts_with(&directory) {
+            return Err(BackupError::InvalidPath {
+                path,
+                reason: "backup_path_outside_source_directory",
+            });
+        }
+        Ok(path)
     }
 }
 
-fn validate_source_path(source: &Path) -> Result<PathBuf, BackupError> {
+fn validate_metadata(source: &Path, metadata: &BackupMetadata) -> Result<(), BackupError> {
+    if metadata.schema_version != METADATA_SCHEMA_VERSION {
+        return Err(BackupError::UnsupportedMetadataVersion(
+            metadata.schema_version,
+        ));
+    }
+    if !paths_equal(&metadata.source_path, source) {
+        return Err(BackupError::InvalidMetadata("metadata_source_mismatch"));
+    }
+    if metadata.records.is_empty() {
+        return Err(BackupError::InvalidMetadata("metadata_records_empty"));
+    }
+    let mut ids = HashSet::new();
+    let mut originals = 0;
+    for stored in &metadata.records {
+        validate_stored_backup(source, stored)?;
+        if !ids.insert(stored.record.id.as_str()) {
+            return Err(BackupError::InvalidMetadata("duplicate_backup_id"));
+        }
+        if stored.record.reason == ApplyReason::FirstOriginal {
+            originals += 1;
+        }
+    }
+    if originals != 1 {
+        return Err(BackupError::InvalidMetadata(
+            "exactly_one_first_original_required",
+        ));
+    }
+    let mut retired_names = HashSet::new();
+    for file_name in &metadata.pending_deletions {
+        validate_retired_file_name(file_name)?;
+        if !retired_names.insert(file_name) {
+            return Err(BackupError::InvalidMetadata("duplicate_pending_deletion"));
+        }
+        if metadata
+            .records
+            .iter()
+            .any(|stored| stored.file_name == *file_name)
+        {
+            return Err(BackupError::InvalidMetadata(
+                "pending_deletion_is_still_reachable",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_stored_backup(source: &Path, stored: &StoredBackup) -> Result<(), BackupError> {
+    if !paths_equal(&stored.record.source_path, source) {
+        return Err(BackupError::InvalidMetadata("record_source_mismatch"));
+    }
+    let parsed = Uuid::parse_str(&stored.record.id)
+        .map_err(|_| BackupError::InvalidMetadata("record_id_must_be_uuid"))?;
+    if parsed.to_string() != stored.record.id {
+        return Err(BackupError::InvalidMetadata("record_id_must_be_canonical"));
+    }
+    if stored.record.sha256.len() != 64
+        || !stored
+            .record
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(BackupError::InvalidMetadata("sha256_must_be_lowercase_hex"));
+    }
+    OffsetDateTime::parse(&stored.record.created_at, &Rfc3339)
+        .map_err(|_| BackupError::InvalidMetadata("created_at_must_be_rfc3339"))?;
+    validate_file_name(&stored.file_name)?;
+    let expected_suffix = format!("-{}.ini", stored.record.id);
+    let prefix = stored
+        .file_name
+        .strip_suffix(&expected_suffix)
+        .ok_or(BackupError::InvalidMetadata("file_name_id_mismatch"))?;
+    let valid_prefix = if stored.record.reason == ApplyReason::FirstOriginal {
+        prefix == "original"
+    } else {
+        !prefix.is_empty() && prefix.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    if !valid_prefix {
+        return Err(BackupError::InvalidMetadata("invalid_backup_file_name"));
+    }
+    if stored.application_version.is_empty() {
+        return Err(BackupError::InvalidMetadata("application_version_empty"));
+    }
+    Ok(())
+}
+
+fn validate_operation_reason(reason: ApplyReason) -> Result<(), BackupError> {
+    if matches!(reason, ApplyReason::FirstOriginal | ApplyReason::Restore) {
+        Err(BackupError::InvalidReason(reason))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_expectation(expectation: &SourceExpectation) -> Result<(), BackupError> {
+    if let SourceExpectation::Present(hash) = expectation {
+        if hash.len() != 64
+            || !hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(BackupError::InvalidMetadata("expected_hash_invalid"));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_source_identity(source: &Path) -> Result<SourceIdentity, BackupError> {
     if !source.is_absolute() {
         return Err(BackupError::InvalidPath {
             path: source.to_path_buf(),
             reason: "source_must_be_absolute",
         });
     }
-    let metadata = fs::symlink_metadata(source)
-        .map_err(|error| BackupError::io("source_metadata", source, error))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+    let file_name = source.file_name().ok_or_else(|| BackupError::InvalidPath {
+        path: source.to_path_buf(),
+        reason: "source_must_have_a_file_name",
+    })?;
+    if file_name.to_string_lossy().contains(':') {
         return Err(BackupError::InvalidPath {
             path: source.to_path_buf(),
+            reason: "source_ads_is_not_allowed",
+        });
+    }
+    let parent = source.parent().ok_or_else(|| BackupError::InvalidPath {
+        path: source.to_path_buf(),
+        reason: "source_must_have_a_parent",
+    })?;
+    let canonical_parent = fs::canonicalize(parent)
+        .map_err(|error| BackupError::io("canonicalize_source_parent", parent, error))?;
+    let path = canonical_parent.join(file_name);
+    Ok(SourceIdentity {
+        lock_key: source_lock_key(&path),
+        path,
+    })
+}
+
+fn validate_regular_source(path: &Path) -> Result<(), BackupError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| BackupError::io("source_metadata", path, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(BackupError::InvalidPath {
+            path: path.to_path_buf(),
             reason: "source_must_be_a_regular_file",
         });
     }
-    fs::canonicalize(source).map_err(|error| BackupError::io("canonicalize_source", source, error))
+    validate_link_count_and_reparse(path, &metadata)
+}
+
+fn validate_regular_owned_file(path: &Path, reason: &'static str) -> Result<(), BackupError> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| BackupError::io("owned_file_metadata", path, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(BackupError::InvalidPath {
+            path: path.to_path_buf(),
+            reason,
+        });
+    }
+    validate_link_count_and_reparse(path, &metadata)
 }
 
 fn validate_backup_id(backup_id: &str) -> Result<(), BackupError> {
-    Uuid::parse_str(backup_id)
-        .map(|_| ())
-        .map_err(|_| BackupError::InvalidPath {
+    match Uuid::parse_str(backup_id) {
+        Ok(id) if id.to_string() == backup_id => Ok(()),
+        _ => Err(BackupError::InvalidPath {
             path: PathBuf::from(backup_id),
-            reason: "backup_id_must_be_a_uuid",
-        })
+            reason: "backup_id_must_be_a_canonical_uuid",
+        }),
+    }
 }
 
 fn validate_file_name(file_name: &str) -> Result<(), BackupError> {
@@ -352,15 +689,42 @@ fn validate_file_name(file_name: &str) -> Result<(), BackupError> {
     let mut components = path.components();
     let valid = matches!(components.next(), Some(Component::Normal(_)))
         && components.next().is_none()
+        && file_name.is_ascii()
+        && !file_name.contains(':')
         && !file_name.is_empty();
     if valid {
         Ok(())
     } else {
         Err(BackupError::InvalidPath {
             path: path.to_path_buf(),
-            reason: "backup_file_name_must_be_a_single_component",
+            reason: "backup_file_name_must_be_a_strict_single_component",
         })
     }
+}
+
+fn validate_retired_file_name(file_name: &str) -> Result<(), BackupError> {
+    validate_file_name(file_name)?;
+    let stem = file_name
+        .strip_suffix(".ini")
+        .ok_or(BackupError::InvalidMetadata(
+            "retired_backup_must_end_in_ini",
+        ))?;
+    let (timestamp, id) = stem
+        .split_once('-')
+        .ok_or(BackupError::InvalidMetadata("retired_backup_name_invalid"))?;
+    if timestamp.is_empty() || !timestamp.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(BackupError::InvalidMetadata(
+            "retired_backup_timestamp_invalid",
+        ));
+    }
+    let parsed = Uuid::parse_str(id)
+        .map_err(|_| BackupError::InvalidMetadata("retired_backup_id_invalid"))?;
+    if parsed.to_string() != id {
+        return Err(BackupError::InvalidMetadata(
+            "retired_backup_id_not_canonical",
+        ));
+    }
+    Ok(())
 }
 
 fn source_id(source: &Path) -> String {
@@ -371,22 +735,214 @@ fn source_id(source: &Path) -> String {
     atomic::sha256_hex(normalized.as_bytes())
 }
 
-#[cfg(windows)]
-fn read_attributes(path: &Path) -> Result<OriginalAttributes, BackupError> {
-    use std::os::windows::fs::MetadataExt;
+fn ensure_hash(actual: &str, expected: &str) -> Result<(), BackupError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(BackupError::SourceConflict {
+            expected: expected.to_owned(),
+            actual: actual.to_owned(),
+        })
+    }
+}
 
-    let metadata = fs::metadata(path).map_err(|error| BackupError::io("metadata", path, error))?;
-    Ok(OriginalAttributes {
-        readonly: metadata.permissions().readonly(),
-        windows_file_attributes: Some(metadata.file_attributes()),
-    })
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    #[cfg(windows)]
+    return left
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&right.to_string_lossy());
+    #[cfg(not(windows))]
+    return left == right;
+}
+
+fn with_source_lock<T>(lock_key: &str, operation: impl FnOnce() -> T) -> T {
+    let registry = SOURCE_LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
+    let lock = {
+        let mut locks = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        locks
+            .entry(lock_key.to_owned())
+            .or_default()
+            .upgrade()
+            .unwrap_or_else(|| {
+                let lock = Arc::new(Mutex::new(()));
+                locks.insert(lock_key.to_owned(), Arc::downgrade(&lock));
+                lock
+            })
+    };
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    operation()
+}
+
+fn source_lock_key_for(path: &Path, case_insensitive: bool) -> String {
+    let path = path.to_string_lossy();
+    let normalized = if case_insensitive {
+        path.to_lowercase()
+    } else {
+        path.into_owned()
+    };
+    atomic::sha256_hex(normalized.as_bytes())
+}
+
+fn source_lock_key(path: &Path) -> String {
+    source_lock_key_for(path, cfg!(windows))
+}
+
+#[cfg(windows)]
+fn open_source_locked(path: &Path) -> Result<File, BackupError> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_DELETE)
+        .open(path)
+        .map_err(|error| BackupError::io("open_source_locked", path, error))
 }
 
 #[cfg(not(windows))]
-fn read_attributes(path: &Path) -> Result<OriginalAttributes, BackupError> {
-    let metadata = fs::metadata(path).map_err(|error| BackupError::io("metadata", path, error))?;
-    Ok(OriginalAttributes {
+fn open_source_locked(path: &Path) -> Result<File, BackupError> {
+    File::open(path).map_err(|error| BackupError::io("open_source_locked", path, error))
+}
+
+#[cfg(unix)]
+fn validate_link_count_and_reparse(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), BackupError> {
+    use std::os::unix::fs::MetadataExt;
+
+    if metadata.nlink() != 1 {
+        return Err(BackupError::InvalidPath {
+            path: path.to_path_buf(),
+            reason: "hardlinks_are_not_allowed",
+        });
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn validate_link_count_and_reparse(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), BackupError> {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    if metadata.number_of_links() != Some(1)
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    {
+        return Err(BackupError::InvalidPath {
+            path: path.to_path_buf(),
+            reason: "hardlinks_and_reparse_points_are_not_allowed",
+        });
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn file_identity(metadata: &fs::Metadata) -> Result<FileIdentity, BackupError> {
+    use std::os::unix::fs::MetadataExt;
+
+    Ok(FileIdentity {
+        first: metadata.dev(),
+        second: metadata.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn file_identity(metadata: &fs::Metadata) -> Result<FileIdentity, BackupError> {
+    use std::os::windows::fs::MetadataExt;
+
+    let first = metadata
+        .volume_serial_number()
+        .ok_or(BackupError::InvalidMetadata(
+            "source_volume_identity_unavailable",
+        ))?;
+    let second = metadata.file_index().ok_or(BackupError::InvalidMetadata(
+        "source_file_identity_unavailable",
+    ))?;
+    Ok(FileIdentity {
+        first: u64::from(first),
+        second,
+    })
+}
+
+#[cfg(windows)]
+fn attributes_from_metadata(metadata: &fs::Metadata) -> OriginalAttributes {
+    use std::os::windows::fs::MetadataExt;
+
+    OriginalAttributes {
+        readonly: metadata.permissions().readonly(),
+        windows_file_attributes: Some(metadata.file_attributes()),
+    }
+}
+
+#[cfg(not(windows))]
+fn attributes_from_metadata(metadata: &fs::Metadata) -> OriginalAttributes {
+    OriginalAttributes {
         readonly: metadata.permissions().readonly(),
         windows_file_attributes: None,
-    })
+    }
+}
+
+fn read_attributes(path: &Path) -> Result<OriginalAttributes, BackupError> {
+    let metadata = fs::metadata(path).map_err(|error| BackupError::io("metadata", path, error))?;
+    Ok(attributes_from_metadata(&metadata))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Barrier,
+        },
+        thread,
+        time::Duration,
+    };
+
+    use super::{source_lock_key_for, with_source_lock};
+
+    #[test]
+    fn same_source_operations_are_serialized_in_process() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(Barrier::new(3));
+        let source = std::env::temp_dir().join("locked-Engine.ini");
+        let lock_key = super::source_lock_key(&source);
+        let mut threads = Vec::new();
+        for _ in 0..2 {
+            let active = Arc::clone(&active);
+            let maximum = Arc::clone(&maximum);
+            let start = Arc::clone(&start);
+            let lock_key = lock_key.clone();
+            threads.push(thread::spawn(move || {
+                start.wait();
+                with_source_lock(&lock_key, || {
+                    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    maximum.fetch_max(current, Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(40));
+                    active.fetch_sub(1, Ordering::SeqCst);
+                });
+            }));
+        }
+        start.wait();
+        for thread in threads {
+            thread.join().unwrap();
+        }
+        assert_eq!(maximum.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn windows_lock_keys_are_case_insensitive() {
+        use std::path::Path;
+
+        let first = source_lock_key_for(Path::new(r"C:\Game\Engine.ini"), true);
+        let second = source_lock_key_for(Path::new(r"c:\game\ENGINE.INI"), true);
+        assert_eq!(first, second);
+    }
 }

@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use uuid::Uuid;
 use wuwa_ini_tool_lib::{
-    backup_store::{ApplyReason, BackupError, BackupStore},
+    backup_store::{ApplyReason, BackupError, BackupStore, SourceExpectation},
     ini_document::MergePreview,
 };
 
@@ -118,12 +119,19 @@ fn restore_backs_up_current_bytes_before_replacement() {
 
     let result = fixture
         .store
-        .restore(fixture.source(), &original.backup.id)
+        .restore(
+            fixture.source(),
+            &original.backup.id,
+            SourceExpectation::Present(sha256_hex(b"changed")),
+        )
         .expect("restore should succeed");
 
     assert_eq!(std::fs::read(fixture.source()).unwrap(), b"original");
-    assert_eq!(std::fs::read(&result.backup_path).unwrap(), b"changed");
-    assert_eq!(result.backup.reason, ApplyReason::Restore);
+    assert_eq!(
+        std::fs::read(result.backup_path.as_ref().unwrap()).unwrap(),
+        b"changed"
+    );
+    assert_eq!(result.backup.unwrap().reason, ApplyReason::Restore);
     assert_eq!(result.restored_from.id, original.backup.id);
 }
 
@@ -139,6 +147,48 @@ fn apply_rejects_an_external_source_change() {
 
     assert!(matches!(result, Err(BackupError::SourceConflict { .. })));
     assert_eq!(std::fs::read(fixture.source()).unwrap(), b"external");
+}
+
+#[test]
+fn concurrent_applies_serialize_and_reject_the_stale_preview() {
+    use std::sync::{Arc, Barrier};
+
+    let fixture = TestStore::new(b"observed");
+    let start = Arc::new(Barrier::new(3));
+    let mut threads = Vec::new();
+    for after in [b"first".to_vec(), b"second".to_vec()] {
+        let store = fixture.store.clone();
+        let source = fixture.source.clone();
+        let start = Arc::clone(&start);
+        threads.push(std::thread::spawn(move || {
+            start.wait();
+            store.apply(
+                &source,
+                &MergePreview {
+                    before: b"observed".to_vec(),
+                    after,
+                    semantic_changes: Vec::new(),
+                },
+                ApplyReason::Preset,
+            )
+        }));
+    }
+    start.wait();
+    let results: Vec<_> = threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect();
+
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| matches!(result, Err(BackupError::SourceConflict { .. })))
+            .count(),
+        1
+    );
+    let current = std::fs::read(fixture.source()).unwrap();
+    assert!(current == b"first" || current == b"second");
 }
 
 #[cfg(unix)]
@@ -234,7 +284,11 @@ fn retention_never_prunes_a_pinned_backup() {
 fn restore_rejects_path_traversal_backup_ids() {
     let fixture = TestStore::new(b"before");
 
-    let result = fixture.store.restore(fixture.source(), "../escape.ini");
+    let result = fixture.store.restore(
+        fixture.source(),
+        "../escape.ini",
+        SourceExpectation::Present(sha256_hex(b"before")),
+    );
 
     assert!(matches!(result, Err(BackupError::InvalidPath { .. })));
     assert_eq!(std::fs::read(fixture.source()).unwrap(), b"before");
@@ -249,4 +303,196 @@ fn create_rejects_relative_source_paths() {
         .create(Path::new("../Engine.ini"), ApplyReason::Manual);
 
     assert!(matches!(result, Err(BackupError::InvalidPath { .. })));
+}
+
+#[test]
+fn missing_source_can_be_listed_and_restored_with_an_explicit_expectation() {
+    let fixture = TestStore::new(b"original");
+    fixture
+        .store
+        .apply(
+            fixture.source(),
+            &fixture.preview(b"changed"),
+            ApplyReason::Preset,
+        )
+        .unwrap();
+    let original = fixture
+        .store
+        .list(fixture.source())
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.backup.reason == ApplyReason::FirstOriginal)
+        .unwrap();
+    std::fs::remove_file(fixture.source()).unwrap();
+
+    assert!(!fixture.store.list(fixture.source()).unwrap().is_empty());
+    let restored = fixture
+        .store
+        .restore(
+            fixture.source(),
+            &original.backup.id,
+            SourceExpectation::Missing,
+        )
+        .expect("an explicitly missing source should be restorable");
+
+    assert_eq!(std::fs::read(fixture.source()).unwrap(), b"original");
+    assert!(restored.backup.is_none());
+    assert!(restored.backup_path.is_none());
+}
+
+#[test]
+fn restore_rejects_a_stale_present_expectation() {
+    let fixture = TestStore::new(b"original");
+    fixture
+        .store
+        .apply(
+            fixture.source(),
+            &fixture.preview(b"current"),
+            ApplyReason::Preset,
+        )
+        .unwrap();
+    let original = fixture
+        .store
+        .list(fixture.source())
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.backup.reason == ApplyReason::FirstOriginal)
+        .unwrap();
+
+    let result = fixture.store.restore(
+        fixture.source(),
+        &original.backup.id,
+        SourceExpectation::Present(sha256_hex(b"stale-preview")),
+    );
+
+    assert!(matches!(result, Err(BackupError::SourceConflict { .. })));
+    assert_eq!(std::fs::read(fixture.source()).unwrap(), b"current");
+}
+
+#[test]
+fn public_apply_cannot_use_the_first_original_reason() {
+    let fixture = TestStore::new(b"before");
+
+    let result = fixture.store.apply(
+        fixture.source(),
+        &fixture.preview(b"after"),
+        ApplyReason::FirstOriginal,
+    );
+
+    assert!(matches!(result, Err(BackupError::InvalidReason(_))));
+    assert_eq!(std::fs::read(fixture.source()).unwrap(), b"before");
+    assert!(fixture.store.list(fixture.source()).unwrap().is_empty());
+}
+
+#[test]
+fn metadata_rejects_duplicate_ids_and_malformed_record_fields() {
+    fn assert_invalid(mutator: impl FnOnce(&mut serde_json::Value)) {
+        let fixture = TestStore::new(b"before");
+        fixture
+            .store
+            .apply(
+                fixture.source(),
+                &fixture.preview(b"after"),
+                ApplyReason::Preset,
+            )
+            .unwrap();
+        let entry = fixture.store.list(fixture.source()).unwrap().remove(0);
+        let metadata_path = entry.backup_path.parent().unwrap().join("metadata.json");
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+        mutator(&mut json);
+        std::fs::write(&metadata_path, serde_json::to_vec_pretty(&json).unwrap()).unwrap();
+        assert!(matches!(
+            fixture.store.list(fixture.source()),
+            Err(BackupError::InvalidMetadata(_)) | Err(BackupError::InvalidPath { .. })
+        ));
+    }
+
+    assert_invalid(|json| {
+        let duplicate = json["records"][0].clone();
+        json["records"].as_array_mut().unwrap().push(duplicate);
+    });
+    assert_invalid(|json| json["records"][0]["record"]["sha256"] = "ABC".into());
+    assert_invalid(|json| json["records"][0]["record"]["created_at"] = "yesterday".into());
+    assert_invalid(|json| json["records"][0]["file_name"] = "other.ini".into());
+    assert_invalid(|json| json["records"][0]["record"]["id"] = Uuid::new_v4().to_string().into());
+    assert_invalid(|json| json["pending_deletions"] = serde_json::json!(["metadata.json"]));
+    assert_invalid(|json| {
+        let retired = format!("1-{}.ini", Uuid::new_v4());
+        json["pending_deletions"] = serde_json::json!([retired, retired]);
+    });
+}
+
+#[test]
+fn retention_cleanup_failure_is_nonfatal_and_does_not_overwrite_the_backup_path() {
+    let fixture = TestStore::new(b"value-0");
+    for index in 1..=30 {
+        let next = format!("value-{index}");
+        fixture
+            .store
+            .apply(
+                fixture.source(),
+                &fixture.preview(next.as_bytes()),
+                ApplyReason::Preset,
+            )
+            .unwrap();
+    }
+    let oldest = fixture
+        .store
+        .list(fixture.source())
+        .unwrap()
+        .into_iter()
+        .rfind(|entry| entry.backup.reason != ApplyReason::FirstOriginal)
+        .unwrap();
+    let metadata_path = oldest.backup_path.parent().unwrap().join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["records"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|stored| stored["record"]["id"] != oldest.backup.id);
+    metadata["pending_deletions"] =
+        serde_json::json!([oldest.backup_path.file_name().unwrap().to_str().unwrap()]);
+    std::fs::write(
+        &metadata_path,
+        serde_json::to_vec_pretty(&metadata).unwrap(),
+    )
+    .unwrap();
+    std::fs::remove_file(&oldest.backup_path).unwrap();
+    std::fs::create_dir(&oldest.backup_path).unwrap();
+
+    let result = fixture.store.apply(
+        fixture.source(),
+        &fixture.preview(b"value-31"),
+        ApplyReason::Preset,
+    );
+
+    assert!(
+        result.is_ok(),
+        "cleanup must be retried without failing apply: {result:?}"
+    );
+    assert_eq!(std::fs::read(fixture.source()).unwrap(), b"value-31");
+    assert!(oldest.backup_path.is_dir());
+}
+
+#[test]
+fn apply_scavenges_strictly_owned_sibling_temp_files() {
+    let fixture = TestStore::new(b"before");
+    let temporary = fixture
+        .source()
+        .parent()
+        .unwrap()
+        .join(format!(".Engine.ini.{}.tmp", uuid::Uuid::new_v4()));
+    std::fs::write(&temporary, b"stale").unwrap();
+
+    fixture
+        .store
+        .apply(
+            fixture.source(),
+            &fixture.preview(b"after"),
+            ApplyReason::Preset,
+        )
+        .unwrap();
+
+    assert!(!temporary.exists());
 }

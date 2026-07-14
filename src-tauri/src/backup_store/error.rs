@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {
-    #[error("not_implemented")]
-    NotImplemented,
     #[error("invalid_path: {path}: {reason}")]
     InvalidPath { path: PathBuf, reason: &'static str },
     #[error("io_{operation}: {path}: {source}")]
@@ -17,6 +15,10 @@ pub enum BackupError {
     MetadataJson(#[from] serde_json::Error),
     #[error("unsupported_metadata_version: {0}")]
     UnsupportedMetadataVersion(u32),
+    #[error("invalid_metadata: {0}")]
+    InvalidMetadata(&'static str),
+    #[error("invalid_reason: {0:?}")]
+    InvalidReason(crate::backup_store::ApplyReason),
     #[error("source_conflict: expected {expected}, found {actual}")]
     SourceConflict { expected: String, actual: String },
     #[error("backup_not_found: {0}")]
@@ -32,6 +34,11 @@ pub enum BackupError {
         path: PathBuf,
         expected: String,
         actual: String,
+    },
+    #[error("unrecoverable_transaction: original={original}; rollback={rollback}")]
+    Unrecoverable {
+        original: Box<BackupError>,
+        rollback: Box<BackupError>,
     },
 }
 

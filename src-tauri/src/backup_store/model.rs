@@ -14,6 +14,12 @@ pub enum ApplyReason {
     Manual,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceExpectation {
+    Present(String),
+    Missing,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct OriginalAttributes {
     pub readonly: bool,
@@ -46,8 +52,8 @@ pub struct ApplyResult {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RestoreResult {
-    pub backup: BackupRecord,
-    pub backup_path: PathBuf,
+    pub backup: Option<BackupRecord>,
+    pub backup_path: Option<PathBuf>,
     pub restored_from: BackupRecord,
     pub applied_sha256: String,
 }
@@ -65,6 +71,8 @@ pub(crate) struct BackupMetadata {
     pub schema_version: u32,
     pub source_path: PathBuf,
     pub records: Vec<StoredBackup>,
+    #[serde(default)]
+    pub pending_deletions: Vec<String>,
 }
 
 impl BackupMetadata {
@@ -73,6 +81,7 @@ impl BackupMetadata {
             schema_version: METADATA_SCHEMA_VERSION,
             source_path,
             records: Vec::new(),
+            pending_deletions: Vec::new(),
         }
     }
 }
