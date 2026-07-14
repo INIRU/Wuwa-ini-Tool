@@ -111,6 +111,23 @@ jobs:
           workspaces: src-tauri
       - name: Install locked dependencies
         run: npm ci
+      - name: Compile Windows Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets --no-run
+      - name: Inspect Windows test loader imports
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $testExe = Get-ChildItem "src-tauri/target/debug/deps/wuwa_ini_tool_lib-*.exe" |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+          if (-not $testExe) { throw "The Windows library test executable was not produced." }
+          $dumpbin = Get-ChildItem "${env:ProgramFiles}/Microsoft Visual Studio/2022/Enterprise/VC/Tools/MSVC" -Filter dumpbin.exe -Recurse |
+            Where-Object { $_.FullName -match 'Hostx64\\x64\\dumpbin\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe was not found on the Windows runner." }
+          & $dumpbin.FullName /dependents $testExe.FullName
+          & $dumpbin.FullName /imports $testExe.FullName
       - name: Run Windows Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
       - name: Build unsigned CI-only NSIS bundle
