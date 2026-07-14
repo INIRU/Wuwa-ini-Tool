@@ -1,4 +1,5 @@
 pub mod backup_store;
+pub mod cache_cleanup;
 pub mod catalog;
 pub mod game_discovery;
 pub mod ini_document;
