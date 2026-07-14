@@ -17,7 +17,7 @@
 - Safety: no injection, game-memory access, anti-cheat hooks, drivers, IFEO persistence, or config-monitor bypass.
 - Data: no database; versioned JSON plus byte-for-byte backup files.
 - UI: original `T` bracket mark, Lucide icons, charcoal/ivory/muted-gold tokens, 16/15/14px type baselines, and 44px ordinary targets.
-- TDD: every behavior starts with a failing test and the expected failure is recorded before implementation. Generated scaffolding and declarative metadata contain no behavior and are verified by build/schema checks.
+- TDD: every behavior starts with a failing assertion and the expected failure is recorded before implementation. Create only the compile stubs needed to reach an assertion failure; missing imports/modules, syntax errors, and unrelated configuration failures do not count as RED. Generated scaffolding and declarative metadata contain no behavior and are verified by build/schema checks.
 - Source of truth: `docs/specs/wuwa-ini-tool-v1/01-requirements.md` and `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`.
 
 ---
