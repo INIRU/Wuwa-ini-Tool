@@ -92,6 +92,42 @@ fn merge_finds_a_key_in_a_repeated_section() {
 }
 
 #[test]
+fn managed_section_does_not_trim_non_ascii_whitespace() {
+    let bytes = b"[SystemSettings]\nr.Foo=1\n";
+    let preview = IniDocument::parse(bytes)
+        .unwrap()
+        .merge(&[ManagedChange::set(
+            "\u{a0}SystemSettings\u{a0}",
+            "r.Foo",
+            "2",
+        )])
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8(preview.after).unwrap(),
+        "[SystemSettings]\nr.Foo=1\n[\u{a0}SystemSettings\u{a0}]\nr.Foo=2\n"
+    );
+}
+
+#[test]
+fn managed_key_does_not_trim_non_ascii_whitespace() {
+    let bytes = b"[SystemSettings]\nr.Foo=1\n";
+    let preview = IniDocument::parse(bytes)
+        .unwrap()
+        .merge(&[ManagedChange::set(
+            "SystemSettings",
+            "\u{a0}r.Foo\u{a0}",
+            "2",
+        )])
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8(preview.after).unwrap(),
+        "[SystemSettings]\nr.Foo=1\n\u{a0}r.Foo\u{a0}=2\n"
+    );
+}
+
+#[test]
 fn duplicate_managed_keys_across_repeated_sections_are_ambiguous() {
     let bytes = b"[SystemSettings]\nr.Foo=1\n[ systemsettings ]\n R.FOO =2\n";
     let error = IniDocument::parse(bytes)
@@ -181,4 +217,24 @@ fn invalid_or_unsupported_encodings_are_rejected() {
             Err(IniError::UnsupportedEncoding)
         ));
     }
+}
+
+#[test]
+fn utf32le_bom_is_rejected() {
+    let bytes = [0xff, 0xfe, 0x00, 0x00, b'[', 0x00, 0x00, 0x00];
+
+    assert!(matches!(
+        IniDocument::parse(&bytes),
+        Err(IniError::UnsupportedEncoding)
+    ));
+}
+
+#[test]
+fn utf32be_bom_is_rejected() {
+    let bytes = [0x00, 0x00, 0xfe, 0xff, 0x00, 0x00, 0x00, b'['];
+
+    assert!(matches!(
+        IniDocument::parse(&bytes),
+        Err(IniError::UnsupportedEncoding)
+    ));
 }

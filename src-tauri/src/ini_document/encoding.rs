@@ -3,6 +3,8 @@ use super::IniError;
 const UTF8_BOM: &[u8] = &[0xef, 0xbb, 0xbf];
 const UTF16LE_BOM: &[u8] = &[0xff, 0xfe];
 const UTF16BE_BOM: &[u8] = &[0xfe, 0xff];
+const UTF32LE_BOM: &[u8] = &[0xff, 0xfe, 0x00, 0x00];
+const UTF32BE_BOM: &[u8] = &[0x00, 0x00, 0xfe, 0xff];
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Encoding {
@@ -12,6 +14,10 @@ pub(crate) enum Encoding {
 
 impl Encoding {
     pub(crate) fn decode(bytes: &[u8]) -> Result<(Self, String), IniError> {
+        if bytes.starts_with(UTF32LE_BOM) || bytes.starts_with(UTF32BE_BOM) {
+            return Err(IniError::UnsupportedEncoding);
+        }
+
         if let Some(payload) = bytes.strip_prefix(UTF16LE_BOM) {
             if payload.len() % 2 != 0 {
                 return Err(IniError::UnsupportedEncoding);

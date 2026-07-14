@@ -91,7 +91,7 @@ pub(crate) fn preferred_terminator(lines: &[Line]) -> &str {
         .unwrap_or("\n")
 }
 
-fn trim_ascii(value: &str) -> &str {
+pub(crate) fn trim_ascii(value: &str) -> &str {
     value.trim_matches(|character: char| character.is_ascii_whitespace())
 }
 

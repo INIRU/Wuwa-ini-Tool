@@ -1,5 +1,5 @@
 use super::encoding::Encoding;
-use super::line::{preferred_terminator, render, Line};
+use super::line::{preferred_terminator, render, trim_ascii, Line};
 use super::IniError;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,16 +113,18 @@ fn semantic_change(
 }
 
 fn matching_keys(lines: &[Line], section: &str, key: &str) -> Vec<usize> {
+    let section = trim_ascii(section);
+    let key = trim_ascii(key);
     let mut in_section = false;
     let mut matches = Vec::new();
 
     for (index, line) in lines.iter().enumerate() {
         if let Some(name) = line.section_name() {
-            in_section = name.eq_ignore_ascii_case(section.trim());
+            in_section = name.eq_ignore_ascii_case(section);
         } else if in_section
             && line
                 .key_name()
-                .is_some_and(|name| name.eq_ignore_ascii_case(key.trim()))
+                .is_some_and(|name| name.eq_ignore_ascii_case(key))
         {
             matches.push(index);
         }
@@ -131,24 +133,23 @@ fn matching_keys(lines: &[Line], section: &str, key: &str) -> Vec<usize> {
 }
 
 fn insert_value(lines: &mut Vec<Line>, section: &str, key: &str, value: &str) {
+    let section = trim_ascii(section);
+    let key = trim_ascii(key);
     let terminator = preferred_terminator(lines).to_owned();
     let insertion = section_insertion_index(lines, section);
-    let new_key = format!("{}={}", key.trim(), value);
+    let new_key = format!("{key}={value}");
 
     match insertion {
         Some(index) if index < lines.len() => {
             lines.insert(index, Line::new(new_key, &terminator));
         }
         Some(_) => append_lines(lines, vec![new_key], &terminator),
-        None => append_lines(
-            lines,
-            vec![format!("[{}]", section.trim()), new_key],
-            &terminator,
-        ),
+        None => append_lines(lines, vec![format!("[{section}]"), new_key], &terminator),
     }
 }
 
 fn section_insertion_index(lines: &[Line], section: &str) -> Option<usize> {
+    let section = trim_ascii(section);
     let mut in_target = false;
     let mut insertion = None;
 
@@ -157,7 +158,7 @@ fn section_insertion_index(lines: &[Line], section: &str) -> Option<usize> {
             if in_target {
                 insertion = Some(index);
             }
-            in_target = name.eq_ignore_ascii_case(section.trim());
+            in_target = name.eq_ignore_ascii_case(section);
         }
     }
     if in_target {
