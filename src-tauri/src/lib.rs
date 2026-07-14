@@ -1,3 +1,4 @@
+pub mod backup_store;
 pub mod ini_document;
 
 #[derive(Debug, thiserror::Error)]
