@@ -520,7 +520,7 @@ git commit -m "feat: add Windows process tuning"
 - Create: `src-tauri/tests/supervisor.rs`
 - Create: `src-tauri/src/supervisor/mod.rs`, `state.rs`, `events.rs`
 - Create: `src-tauri/src/commands/mod.rs`, `config.rs`, `game.rs`, `profiles.rs`, `process.rs`, `backups.rs`
-- Modify: `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`, `src-tauri/capabilities/default.json`
+- Modify: `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tauri.conf.json`
 
 **Interfaces:**
 - Produces typed commands `get_app_snapshot`, `preview_ini`, `apply_ini`, `restore_backup`, `save_profile`, `discover_game`, `launch_game`, `get_cpu_topology`, `apply_process_settings`, and supervisor status events.
@@ -545,7 +545,9 @@ fn supervisor_applies_once_to_the_validated_game_process() {
 
 Add wrong-path same-name process, process restart, partial apply, exit, game-
 running write rejection, stale preview token, arbitrary-path rejection, and
-close-to-tray/explicit-quit state tests.
+close-to-tray/explicit-quit state tests. Add a declarative security assertion
+that CSP is non-null and does not allow remote scripts, `unsafe-eval`, broad
+filesystem access, or shell execution.
 
 - [ ] **Step 2: Run RED**
 
@@ -559,7 +561,10 @@ The supervisor states are `Idle`, `Launching`, `WaitingForGame`, `Applying`,
 `Active`, `Partial`, `Denied`, and `Exited`. Poll with bounded backoff while the
 tray app is alive. Capabilities permit only updater check/install, process
 restart, dialog selection, and opener links required by the UI; filesystem and
-shell plugins are not granted broad frontend access.
+shell plugins are not granted broad frontend access. Replace the scaffold's
+null CSP with a restrictive local-app policy that permits only the assets and
+Tauri IPC required by the bundled UI; production builds must not depend on a
+remote origin.
 
 - [ ] **Step 4: Run GREEN and full Rust suite**
 
