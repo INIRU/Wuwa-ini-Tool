@@ -75,6 +75,8 @@ pub enum BackupError {
         #[source]
         source: std::io::Error,
     },
+    #[error("cleanup_pending: {path}")]
+    CleanupPending { path: PathBuf },
 }
 
 impl BackupError {

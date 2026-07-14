@@ -42,6 +42,7 @@ pub struct BackupEntry {
     pub backup: BackupRecord,
     pub backup_path: PathBuf,
     pub integrity: BackupIntegrity,
+    pub cleanup_pending: Vec<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,7 +57,7 @@ pub struct ApplyResult {
     pub backup: BackupRecord,
     pub backup_path: PathBuf,
     pub applied_sha256: String,
-    pub cleanup_pending: Option<PathBuf>,
+    pub cleanup_pending: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,7 +66,7 @@ pub struct RestoreResult {
     pub backup_path: Option<PathBuf>,
     pub restored_from: BackupRecord,
     pub applied_sha256: String,
-    pub cleanup_pending: Option<PathBuf>,
+    pub cleanup_pending: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -91,11 +91,21 @@ struct TransactionJournal {
     phase: TransactionPhase,
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 #[derive(Debug)]
 struct TransactionJournalHandle {
     path: PathBuf,
     record: TransactionJournal,
+}
+
+#[cfg(any(windows, test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JournalUpdatePoint {
+    BeforeTempWrite,
+    AfterTempWrite,
+    AfterTempSync,
+    AfterReplace,
+    AfterParentSync,
 }
 
 #[cfg(windows)]
@@ -490,13 +500,27 @@ where
                 cleanup_pending,
             })
         }
-        Err(original) => match rollback_destination(destination, &rollback, &receipt) {
-            Ok(()) => Err(original),
-            Err(rollback) => Err(BackupError::Unrecoverable {
-                original: Box::new(original),
-                rollback: Box::new(rollback),
-            }),
-        },
+        Err(original) => finish_failed_write(
+            original,
+            rollback_destination(destination, &rollback, receipt),
+        ),
+    }
+}
+
+fn finish_failed_write(
+    original: BackupError,
+    rollback: Result<Option<PathBuf>, BackupError>,
+) -> Result<AtomicWriteResult, BackupError> {
+    match rollback {
+        Ok(None) => Err(original),
+        Ok(Some(path)) => Err(BackupError::Unrecoverable {
+            original: Box::new(original),
+            rollback: Box::new(BackupError::CleanupPending { path }),
+        }),
+        Err(rollback) => Err(BackupError::Unrecoverable {
+            original: Box::new(original),
+            rollback: Box::new(rollback),
+        }),
     }
 }
 
@@ -533,16 +557,16 @@ fn finalize_replace_receipt(receipt: ReplaceReceipt) -> Option<PathBuf> {
 fn rollback_destination(
     destination: &Path,
     rollback: &RollbackSource,
-    receipt: &ReplaceReceipt,
-) -> Result<(), BackupError> {
+    receipt: ReplaceReceipt,
+) -> Result<Option<PathBuf>, BackupError> {
     ensure_installed_destination(destination, &receipt.installed)?;
-    if let Some(capture) = &receipt.capture {
+    if let Some(capture) = receipt.capture.clone() {
         let expected =
             expected_fingerprint(rollback).ok_or_else(|| BackupError::SourceConflict {
                 expected: "present_atomic_capture".to_owned(),
                 actual: "missing_expected_source".to_owned(),
             })?;
-        let captured = fingerprint_file(capture)?;
+        let captured = fingerprint_file(&capture)?;
         if captured != expected {
             return Err(BackupError::SourceConflict {
                 expected: format!("captured:{expected:?}"),
@@ -553,15 +577,17 @@ fn rollback_destination(
         {
             let rollback_receipt = replace_file_windows_transaction(
                 destination,
-                capture,
+                &capture,
                 &receipt.installed,
                 &expected,
                 true,
             )?;
-            let _ = finalize_replace_receipt(rollback_receipt);
+            if let Some(path) = finalize_replace_receipt(rollback_receipt) {
+                return Err(BackupError::CleanupPending { path });
+            }
         }
         #[cfg(not(windows))]
-        restore_capture_platform(capture, destination)?;
+        restore_capture_platform(&capture, destination)?;
         persist_attributes_and_flush(destination, rollback_attributes(rollback)?)?;
         let restored = fingerprint_file(destination)?;
         if restored != expected {
@@ -571,7 +597,7 @@ fn rollback_destination(
                 actual: restored.sha256,
             });
         }
-        return Ok(());
+        return Ok(finalize_replace_receipt(receipt));
     }
     match rollback {
         RollbackSource::Missing => {
@@ -579,7 +605,7 @@ fn rollback_destination(
                 delete_file_no_follow(destination, receipt.installed.identity)?;
                 sync_parent(destination)?;
             }
-            Ok(())
+            Ok(finalize_replace_receipt(receipt))
         }
         RollbackSource::Backup {
             path,
@@ -588,14 +614,18 @@ fn rollback_destination(
             attributes,
         } => {
             let bytes = read_verified_bytes(path, sha256)?;
-            restore_present(destination, &bytes, sha256, attributes)
+            restore_present(destination, &bytes, sha256, attributes)?;
+            Ok(finalize_replace_receipt(receipt))
         }
         RollbackSource::Bytes {
             bytes,
             sha256,
             identity: _,
             attributes,
-        } => restore_present(destination, bytes, sha256, attributes),
+        } => {
+            restore_present(destination, bytes, sha256, attributes)?;
+            Ok(finalize_replace_receipt(receipt))
+        }
     }
 }
 
@@ -752,7 +782,26 @@ fn detect_unresolved_transaction(
         }
         let bytes = fs::read(&journal_path)
             .map_err(|error| BackupError::io("read_recovery_journal", &journal_path, error))?;
-        let journal: TransactionJournal = serde_json::from_slice(&bytes)?;
+        let journal: TransactionJournal = match serde_json::from_slice(&bytes) {
+            Ok(journal) => journal,
+            Err(error) => {
+                let file_name = destination
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("Engine.ini");
+                return Err(BackupError::ReconciliationRequired {
+                    state: Box::new(ReconciliationState {
+                        operation_id: operation_id.to_owned(),
+                        code: 0,
+                        destination: destination.to_path_buf(),
+                        replacement: parent.join(format!(".{file_name}.{operation_id}.rollback")),
+                        capture: parent.join(format!(".{file_name}.{operation_id}.capture")),
+                        journal: journal_path,
+                        context: format!("recovery journal is malformed or truncated: {error}"),
+                    }),
+                });
+            }
+        };
         validate_transaction_journal(destination, &journal_path, &journal)?;
         if journal.phase == TransactionPhase::Resolved {
             remove_owned_temp_with_hook(&journal_path, |_| Ok(()))?;
@@ -915,33 +964,87 @@ fn persist_transaction_journal(
     journal: &TransactionJournalHandle,
     create: bool,
 ) -> Result<(), BackupError> {
-    if !create {
-        let metadata = fs::symlink_metadata(&journal.path)
-            .map_err(|error| BackupError::io("journal_metadata", &journal.path, error))?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(BackupError::InvalidPath {
-                path: journal.path.clone(),
-                reason: "recovery_journal_must_be_a_regular_file",
-            });
-        }
-    }
+    persist_transaction_journal_with_hook(journal, create, |_| Ok(()))
+}
+
+#[cfg(any(windows, test))]
+fn persist_transaction_journal_with_hook<F>(
+    journal: &TransactionJournalHandle,
+    create: bool,
+    mut hook: F,
+) -> Result<(), BackupError>
+where
+    F: FnMut(JournalUpdatePoint) -> std::io::Result<()>,
+{
     let bytes = serde_json::to_vec(&journal.record)?;
-    let mut options = OpenOptions::new();
-    options.write(true);
     if create {
-        options.create_new(true);
-    } else {
-        options.truncate(true);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&journal.path)
+            .map_err(|error| BackupError::io("open_recovery_journal", &journal.path, error))?;
+        file.write_all(&bytes)
+            .map_err(|error| BackupError::io("write_recovery_journal", &journal.path, error))?;
+        file.sync_all()
+            .map_err(|error| BackupError::io("sync_recovery_journal", &journal.path, error))?;
+        drop(file);
+        return sync_parent(&journal.path);
     }
-    let mut file = options
-        .open(&journal.path)
-        .map_err(|error| BackupError::io("open_recovery_journal", &journal.path, error))?;
-    file.write_all(&bytes)
-        .map_err(|error| BackupError::io("write_recovery_journal", &journal.path, error))?;
-    file.sync_all()
-        .map_err(|error| BackupError::io("sync_recovery_journal", &journal.path, error))?;
+
+    let metadata = fs::symlink_metadata(&journal.path)
+        .map_err(|error| BackupError::io("journal_metadata", &journal.path, error))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(BackupError::InvalidPath {
+            path: journal.path.clone(),
+            reason: "recovery_journal_must_be_a_regular_file",
+        });
+    }
+    let parent = journal
+        .path
+        .parent()
+        .ok_or_else(|| BackupError::InvalidPath {
+            path: journal.path.clone(),
+            reason: "recovery_journal_has_no_parent",
+        })?;
+    let journal_name = journal
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| BackupError::InvalidPath {
+            path: journal.path.clone(),
+            reason: "recovery_journal_has_no_file_name",
+        })?;
+    let temporary = parent.join(format!(".{journal_name}.{}.tmp", Uuid::new_v4()));
+    hook(JournalUpdatePoint::BeforeTempWrite)
+        .map_err(|error| BackupError::io("journal_update_hook", &journal.path, error))?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| BackupError::io("create_journal_update", &temporary, error))?;
+    if let Err(error) = file.write_all(&bytes).and_then(|()| {
+        hook(JournalUpdatePoint::AfterTempWrite)?;
+        file.sync_all()?;
+        hook(JournalUpdatePoint::AfterTempSync)
+    }) {
+        drop(file);
+        let _ = cleanup_temporary(&temporary);
+        return Err(BackupError::io("write_journal_update", &temporary, error));
+    }
     drop(file);
-    sync_parent(&journal.path)
+    if let Err(error) = replace_file_platform(&journal.path, &temporary) {
+        let _ = cleanup_temporary(&temporary);
+        return Err(BackupError::io(
+            "replace_recovery_journal",
+            &journal.path,
+            error,
+        ));
+    }
+    hook(JournalUpdatePoint::AfterReplace)
+        .map_err(|error| BackupError::io("journal_update_hook", &journal.path, error))?;
+    sync_parent(&journal.path)?;
+    hook(JournalUpdatePoint::AfterParentSync)
+        .map_err(|error| BackupError::io("journal_update_hook", &journal.path, error))
 }
 
 #[cfg(windows)]
@@ -1725,7 +1828,17 @@ fn replace_file_windows_transaction(
             );
             match recovery {
                 Ok(receipt) => {
-                    let _ = finalize_replace_receipt(receipt);
+                    if let Some(path) = finalize_replace_receipt(receipt) {
+                        return Err(reconciliation_after_call(
+                            destination,
+                            &mut journal,
+                            code,
+                            format!(
+                                "authoritative external restore cleanup remains pending: {}",
+                                path.display()
+                            ),
+                        ));
+                    }
                 }
                 Err(error) => {
                     return Err(reconciliation_after_call(
@@ -2073,6 +2186,9 @@ mod tests {
 
         assert!(matches!(result, Err(BackupError::Io { .. })));
         assert_eq!(fs::read(&destination).unwrap(), b"before");
+        write_verified(&destination, b"next", &attributes)
+            .expect("resolved rollback journals must not block the next mutation");
+        assert_eq!(fs::read(&destination).unwrap(), b"next");
     }
 
     #[test]
@@ -2116,7 +2232,7 @@ mod tests {
             capture: Some(capture),
         };
 
-        rollback_destination(&destination, &rollback, &receipt).unwrap();
+        rollback_destination(&destination, &rollback, receipt).unwrap();
 
         assert_eq!(fs::read(&destination).unwrap(), b"before");
         assert!(fs::metadata(&destination).unwrap().permissions().readonly());
@@ -2355,6 +2471,78 @@ mod tests {
     }
 
     #[test]
+    fn truncated_recovery_journal_fails_closed_and_preserves_capture() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("Engine.ini");
+        let operation_id = uuid::Uuid::new_v4();
+        let capture = directory
+            .path()
+            .join(format!(".Engine.ini.{operation_id}.capture"));
+        let journal = directory
+            .path()
+            .join(format!(".Engine.ini.{operation_id}.journal"));
+        fs::write(&capture, b"only-captured-copy").unwrap();
+        fs::write(&journal, b"{\"schema_version\":1").unwrap();
+
+        let result = scavenge_owned_temps(&destination);
+
+        assert!(matches!(
+            result,
+            Err(BackupError::ReconciliationRequired { .. })
+        ));
+        assert_eq!(fs::read(capture).unwrap(), b"only-captured-copy");
+    }
+
+    #[test]
+    fn interrupted_journal_updates_leave_old_or_new_complete_json() {
+        for interruption in [
+            JournalUpdatePoint::BeforeTempWrite,
+            JournalUpdatePoint::AfterTempWrite,
+            JournalUpdatePoint::AfterTempSync,
+            JournalUpdatePoint::AfterReplace,
+            JournalUpdatePoint::AfterParentSync,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let operation_id = uuid::Uuid::new_v4();
+            let path = directory
+                .path()
+                .join(format!(".Engine.ini.{operation_id}.journal"));
+            let mut record = TransactionJournal {
+                schema_version: TRANSACTION_JOURNAL_SCHEMA_VERSION,
+                operation_id: operation_id.to_string(),
+                destination_name: "Engine.ini".to_owned(),
+                replacement_name: format!(".Engine.ini.{operation_id}.tmp"),
+                capture_name: format!(".Engine.ini.{operation_id}.capture"),
+                expected_destination_sha256: "a".repeat(64),
+                replacement_sha256: "b".repeat(64),
+                phase: TransactionPhase::Prepared,
+            };
+            fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+            record.phase = TransactionPhase::CleanupPending;
+            let journal = TransactionJournalHandle {
+                path: path.clone(),
+                record,
+            };
+
+            let result = persist_transaction_journal_with_hook(&journal, false, |point| {
+                if point == interruption {
+                    Err(std::io::Error::other("injected journal interruption"))
+                } else {
+                    Ok(())
+                }
+            });
+
+            assert!(result.is_err());
+            let persisted: TransactionJournal =
+                serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            assert!(matches!(
+                persisted.phase,
+                TransactionPhase::Prepared | TransactionPhase::CleanupPending
+            ));
+        }
+    }
+
+    #[test]
     fn fingerprint_rejects_path_swapped_after_handle_open() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("Engine.ini");
@@ -2390,5 +2578,24 @@ mod tests {
         let pending = finalize_replace_receipt(receipt);
 
         assert_eq!(pending, Some(capture));
+    }
+
+    #[test]
+    fn rollback_cleanup_pending_is_surfaced_with_the_primary_error() {
+        let pending = std::env::temp_dir().join("pending-recovery-journal.json");
+        let result = finish_failed_write(
+            BackupError::io(
+                "post_replace",
+                "Engine.ini",
+                std::io::Error::other("primary"),
+            ),
+            Ok(Some(pending.clone())),
+        );
+
+        assert!(matches!(
+            result,
+            Err(BackupError::Unrecoverable { rollback, .. })
+                if matches!(rollback.as_ref(), BackupError::CleanupPending { path } if path == &pending)
+        ));
     }
 }

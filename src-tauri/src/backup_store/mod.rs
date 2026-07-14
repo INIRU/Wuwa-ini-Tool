@@ -107,12 +107,14 @@ impl BackupStore {
                 (snapshot.file_identity.first, snapshot.file_identity.second),
                 &backup.backup.original_attributes,
             )?;
+            let cleanup_pending =
+                aggregate_cleanup_pending(backup.cleanup_pending.clone(), applied.cleanup_pending);
 
             Ok(ApplyResult {
                 backup: backup.backup,
                 backup_path: backup.backup_path,
                 applied_sha256: applied.sha256,
-                cleanup_pending: applied.cleanup_pending,
+                cleanup_pending,
             })
         })
     }
@@ -169,13 +171,20 @@ impl BackupStore {
                     &target.record.original_attributes,
                 )?,
             };
+            let cleanup_pending = aggregate_cleanup_pending(
+                operation_backup
+                    .as_ref()
+                    .map(|entry| entry.cleanup_pending.clone())
+                    .unwrap_or_default(),
+                applied.cleanup_pending,
+            );
 
             Ok(RestoreResult {
                 backup: operation_backup.as_ref().map(|entry| entry.backup.clone()),
                 backup_path: operation_backup.map(|entry| entry.backup_path),
                 restored_from: target.record,
                 applied_sha256: applied.sha256,
-                cleanup_pending: applied.cleanup_pending,
+                cleanup_pending,
             })
         })
     }
@@ -195,6 +204,7 @@ impl BackupStore {
                         backup: stored.record,
                         backup_path,
                         integrity,
+                        cleanup_pending: Vec::new(),
                     })
                 })
                 .collect::<Result<Vec<_>, BackupError>>()?;
@@ -220,7 +230,9 @@ impl BackupStore {
                 .ok_or_else(|| BackupError::BackupNotFound(backup_id.to_owned()))?;
             record.record.pinned = pinned;
             let result = record.record.clone();
-            self.save_metadata(&identity.path, &metadata)?;
+            if let Some(path) = self.save_metadata(&identity.path, &metadata)? {
+                return Err(BackupError::CleanupPending { path });
+            }
             Ok(result)
         })
     }
@@ -344,13 +356,14 @@ impl BackupStore {
         metadata
             .pending_deletions
             .extend(retention::prune(&mut metadata.records));
-        self.save_metadata(&snapshot.path, &metadata)?;
+        let metadata_cleanup_pending = self.save_metadata(&snapshot.path, &metadata)?;
         self.cleanup_pending_nonfatal(&directory, &metadata.pending_deletions);
 
         Ok(BackupEntry {
             backup_path: self.resolve_backup_path(&snapshot.path, &requested.file_name)?,
             backup: requested.record,
             integrity: BackupIntegrity::Verified,
+            cleanup_pending: metadata_cleanup_pending.into_iter().collect(),
         })
     }
 
@@ -375,7 +388,9 @@ impl BackupStore {
         if remaining != metadata.pending_deletions {
             atomic::sync_parent_directory(&directory.join(METADATA_FILE_NAME))?;
             metadata.pending_deletions = remaining;
-            self.save_metadata(source, metadata)?;
+            if let Some(path) = self.save_metadata(source, metadata)? {
+                return Err(BackupError::CleanupPending { path });
+            }
         }
         Ok(())
     }
@@ -489,7 +504,11 @@ impl BackupStore {
         Ok(metadata)
     }
 
-    fn save_metadata(&self, source: &Path, metadata: &BackupMetadata) -> Result<(), BackupError> {
+    fn save_metadata(
+        &self,
+        source: &Path,
+        metadata: &BackupMetadata,
+    ) -> Result<Option<PathBuf>, BackupError> {
         validate_metadata(source, metadata)?;
         let path = self
             .source_directory(source, true)?
@@ -503,8 +522,7 @@ impl BackupStore {
                 windows_file_attributes: None,
             }
         };
-        let _ = atomic::write_verified(&path, &bytes, &attributes)?;
-        Ok(())
+        Ok(atomic::write_verified(&path, &bytes, &attributes)?.cleanup_pending)
     }
 
     fn resolve_backup_path(&self, source: &Path, file_name: &str) -> Result<PathBuf, BackupError> {
@@ -533,6 +551,18 @@ fn backup_integrity(path: &Path, expected: &str) -> BackupIntegrity {
             Ok(_) | Err(_) => BackupIntegrity::Corrupt,
         },
     }
+}
+
+fn aggregate_cleanup_pending(
+    mut metadata: Vec<PathBuf>,
+    operation: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    if let Some(path) = operation {
+        if !metadata.contains(&path) {
+            metadata.push(path);
+        }
+    }
+    metadata
 }
 
 fn validate_metadata(source: &Path, metadata: &BackupMetadata) -> Result<(), BackupError> {
@@ -1028,7 +1058,10 @@ mod tests {
         time::Duration,
     };
 
-    use super::{source_lock_key_for, validate_windows_case_sensitive_flag, with_source_lock};
+    use super::{
+        aggregate_cleanup_pending, source_lock_key_for, validate_windows_case_sensitive_flag,
+        with_source_lock,
+    };
 
     #[test]
     fn same_source_operations_are_serialized_in_process() {
@@ -1089,5 +1122,15 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn metadata_and_source_cleanup_warnings_are_aggregated() {
+        let metadata = std::path::PathBuf::from("metadata-cleanup.json");
+        let source = std::path::PathBuf::from("source-cleanup.json");
+
+        let pending = aggregate_cleanup_pending(vec![metadata.clone()], Some(source.clone()));
+
+        assert_eq!(pending, vec![metadata, source]);
     }
 }
