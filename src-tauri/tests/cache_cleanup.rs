@@ -9,6 +9,7 @@ use wuwa_ini_tool_lib::cache_cleanup::{
     CacheCleanupError, CacheCleanupService, CacheCleanupWarning, CleanupRootOutcome,
     CleanupSelection, CleanupStopReason, GameProcessProbe,
 };
+use wuwa_ini_tool_lib::maintenance::{MaintenanceGate, MaintenanceOperation};
 
 struct FakeProbe(AtomicBool);
 
@@ -143,6 +144,31 @@ impl Fixture {
         )
         .unwrap()
     }
+}
+
+#[test]
+fn shared_maintenance_gate_blocks_cleanup_during_game_launch() {
+    let fixture = Fixture::new();
+    let cache = fixture.game_root.join("Client/Saved/PSO/cache.bin");
+    fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    fs::write(&cache, b"cache").unwrap();
+    let gate = MaintenanceGate::new();
+    let service = CacheCleanupService::new_with_gate(
+        fixture.executable.clone(),
+        fixture.local_app_data.clone(),
+        fixture.receipts.clone(),
+        FakeProbe::stopped(),
+        gate.clone(),
+    )
+    .unwrap();
+    let preview = service.preview(CleanupSelection::wuwa_only()).unwrap();
+    let _launch = gate.try_acquire(MaintenanceOperation::GameLaunch).unwrap();
+
+    assert!(matches!(
+        service.execute(preview.token(), true),
+        Err(CacheCleanupError::MaintenanceBusy)
+    ));
+    assert_eq!(fs::read(cache).unwrap(), b"cache");
 }
 
 #[test]

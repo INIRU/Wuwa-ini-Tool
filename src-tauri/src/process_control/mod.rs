@@ -19,9 +19,9 @@ pub use focus_mode::{
     FileFocusJournalStore, FocusActivationReport, FocusActivationRequest, FocusAdaptiveAction,
     FocusAdaptiveDecision, FocusBackend, FocusCandidate, FocusConfig, FocusContentionKind,
     FocusError, FocusJournal, FocusJournalEntry, FocusJournalStore, FocusModeController,
-    FocusPreview, FocusProcessIdentity, FocusProcessLoad, FocusProcessSnapshot, FocusProcessStatus,
-    FocusRestoreOutcome, FocusRestoreReport, FocusTelemetrySample, FocusThresholds,
-    FOCUS_JOURNAL_SCHEMA_VERSION,
+    FocusPreview, FocusProcessIdentity, FocusProcessLoad, FocusProcessResult, FocusProcessSnapshot,
+    FocusProcessStatus, FocusRestoreOutcome, FocusRestoreReport, FocusRuntimeAvailability,
+    FocusTelemetrySample, FocusThresholds, FOCUS_JOURNAL_SCHEMA_VERSION,
 };
 pub use focus_mode_system::SystemFocusBackend;
 pub use focus_telemetry_system::SystemFocusTelemetrySampler;
@@ -155,7 +155,11 @@ impl ProcessController {
         {
             return Err(ProcessError::InvalidExecutableIdentity);
         }
-        let target = ProcessTarget::from_installation(record.pid, installation)?;
+        let target = ProcessTarget::from_installation_with_creation(
+            record.pid,
+            record.creation_time_100ns,
+            installation,
+        )?;
         let outcome = backend::restore_game_qos(&target, record)?;
         journal.clear()?;
         Ok(outcome)

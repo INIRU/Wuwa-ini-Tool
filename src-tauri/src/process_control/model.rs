@@ -90,11 +90,31 @@ pub struct ApplyReport {
 pub struct ProcessTarget {
     pid: u32,
     expected_executable: PathBuf,
+    expected_creation_time_100ns: Option<u64>,
 }
 
 impl ProcessTarget {
     pub fn from_installation(
         pid: u32,
+        installation: &GameInstallation,
+    ) -> Result<Self, ProcessError> {
+        Self::validated(pid, None, installation)
+    }
+
+    pub fn from_installation_with_creation(
+        pid: u32,
+        creation_time_100ns: u64,
+        installation: &GameInstallation,
+    ) -> Result<Self, ProcessError> {
+        if creation_time_100ns == 0 {
+            return Err(ProcessError::InvalidExecutableIdentity);
+        }
+        Self::validated(pid, Some(creation_time_100ns), installation)
+    }
+
+    fn validated(
+        pid: u32,
+        expected_creation_time_100ns: Option<u64>,
         installation: &GameInstallation,
     ) -> Result<Self, ProcessError> {
         if pid == 0 {
@@ -111,6 +131,7 @@ impl ProcessTarget {
         Ok(Self {
             pid,
             expected_executable: installation.executable.clone(),
+            expected_creation_time_100ns,
         })
     }
 
@@ -120,6 +141,10 @@ impl ProcessTarget {
 
     pub fn expected_executable(&self) -> &Path {
         &self.expected_executable
+    }
+
+    pub const fn expected_creation_time_100ns(&self) -> Option<u64> {
+        self.expected_creation_time_100ns
     }
 }
 

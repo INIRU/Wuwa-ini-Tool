@@ -77,6 +77,8 @@ pub enum BackupError {
     },
     #[error("cleanup_pending: {paths:?}")]
     CleanupPending { paths: Vec<PathBuf> },
+    #[error("mutation_guard_rejected")]
+    MutationGuardRejected,
 }
 
 impl BackupError {

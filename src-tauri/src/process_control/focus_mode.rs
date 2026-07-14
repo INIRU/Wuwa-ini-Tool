@@ -399,6 +399,16 @@ pub struct FocusPreview {
     pub token: u64,
     pub thresholds: FocusThresholds,
     pub candidates: Vec<FocusCandidate>,
+    pub runtime_availability: FocusRuntimeAvailability,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FocusRuntimeAvailability {
+    Available,
+    TopologyUnavailable,
+    TelemetryUnavailable,
+    Unavailable,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -638,6 +648,7 @@ pub struct FocusModeController<B, S> {
     config: FocusConfig,
     latest_preview: Option<FocusPreview>,
     selected: BTreeSet<FocusProcessIdentity>,
+    select_all_active: bool,
     next_token: u64,
 }
 
@@ -649,6 +660,7 @@ impl<B: FocusBackend, S: FocusJournalStore> FocusModeController<B, S> {
             config,
             latest_preview: None,
             selected: BTreeSet::new(),
+            select_all_active: false,
             next_token: 1,
         }
     }
@@ -663,6 +675,7 @@ impl<B: FocusBackend, S: FocusJournalStore> FocusModeController<B, S> {
                 .iter()
                 .map(|snapshot| evaluate_focus_candidate(snapshot, &self.config))
                 .collect(),
+            runtime_availability: FocusRuntimeAvailability::Available,
         };
         self.next_token = self.next_token.saturating_add(1);
         self.latest_preview = Some(preview.clone());
@@ -714,6 +727,7 @@ impl<B: FocusBackend, S: FocusJournalStore> FocusModeController<B, S> {
             request.selected.clone()
         };
 
+        self.select_all_active = request.select_all_eligible;
         self.selected = selected.iter().cloned().collect();
         Ok(FocusActivationReport {
             results: selected
@@ -941,6 +955,29 @@ impl<B: FocusBackend, S: FocusJournalStore> FocusModeController<B, S> {
 
     pub fn journal_store_mut(&mut self) -> &mut S {
         &mut self.journal_store
+    }
+
+    pub fn selected(&self) -> &BTreeSet<FocusProcessIdentity> {
+        &self.selected
+    }
+
+    pub const fn config(&self) -> &FocusConfig {
+        &self.config
+    }
+
+    pub fn refresh_selected(&mut self) -> Result<(), FocusError> {
+        if !self.select_all_active {
+            return Ok(());
+        }
+        self.selected = self
+            .backend
+            .enumerate()?
+            .into_iter()
+            .take(MAX_FOCUS_JOURNAL_ENTRIES)
+            .filter(|snapshot| evaluate_focus_candidate(snapshot, &self.config).is_eligible())
+            .map(|snapshot| snapshot.identity)
+            .collect();
+        Ok(())
     }
 }
 

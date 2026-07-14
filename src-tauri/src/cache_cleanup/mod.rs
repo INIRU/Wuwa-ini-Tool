@@ -19,6 +19,8 @@ pub use model::{
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::maintenance::{MaintenanceGate, MaintenanceOperation};
+
 use self::{
     cleanup::PreparedRoot,
     receipt::{validate_receipt_directory, ReceiptJournal},
@@ -37,6 +39,7 @@ pub struct CacheCleanupService<P> {
     local_app_data: PathBuf,
     receipt_directory: PathBuf,
     probe: P,
+    maintenance_gate: MaintenanceGate,
     previews: Mutex<HashMap<Uuid, StoredPreview>>,
     cleanup_lock: Mutex<()>,
 }
@@ -70,9 +73,22 @@ impl<P: GameProcessProbe> CacheCleanupService<P> {
             local_app_data,
             receipt_directory,
             probe,
+            maintenance_gate: MaintenanceGate::new(),
             previews: Mutex::new(HashMap::new()),
             cleanup_lock: Mutex::new(()),
         })
+    }
+
+    pub fn new_with_gate(
+        game_executable: PathBuf,
+        local_app_data: PathBuf,
+        receipt_directory: PathBuf,
+        probe: P,
+        gate: MaintenanceGate,
+    ) -> Result<Self, CacheCleanupError> {
+        let mut service = Self::new(game_executable, local_app_data, receipt_directory, probe)?;
+        service.maintenance_gate = gate;
+        Ok(service)
     }
 
     pub fn preview(
@@ -126,6 +142,10 @@ impl<P: GameProcessProbe> CacheCleanupService<P> {
         if !confirmed {
             return Err(CacheCleanupError::ConfirmationRequired);
         }
+        let _maintenance_guard = self
+            .maintenance_gate
+            .try_acquire(MaintenanceOperation::CacheCleanup)
+            .map_err(|_| CacheCleanupError::MaintenanceBusy)?;
         let _cleanup_guard = self
             .cleanup_lock
             .lock()

@@ -244,6 +244,12 @@ fn open_validated_process(target: &ProcessTarget) -> Result<OwnedHandle, Process
     if !same_canonical_windows_path(&actual, target.expected_executable())? {
         return Err(ProcessError::InvalidExecutableIdentity);
     }
+    if target
+        .expected_creation_time_100ns()
+        .is_some_and(|expected| read_creation_time(process.raw()) != Ok(expected))
+    {
+        return Err(ProcessError::InvalidExecutableIdentity);
+    }
     Ok(process)
 }
 

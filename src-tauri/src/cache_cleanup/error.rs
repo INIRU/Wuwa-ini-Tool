@@ -20,6 +20,8 @@ pub enum CacheCleanupError {
     InvalidReceiptStore,
     #[error("cache_cleanup_state_unavailable")]
     StateUnavailable,
+    #[error("maintenance_busy")]
+    MaintenanceBusy,
     #[error("unsafe_cache_path: {0}")]
     UnsafePath(PathBuf),
     #[error("cache_cleanup_io_{operation}: {path}: {source}")]

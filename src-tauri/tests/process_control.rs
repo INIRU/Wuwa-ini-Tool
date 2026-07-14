@@ -390,6 +390,14 @@ fn process_target_is_created_only_from_a_validated_installation_and_nonzero_pid(
         target.expected_executable(),
         executable.canonicalize().unwrap()
     );
+    assert_eq!(target.expected_creation_time_100ns(), None);
+    assert_eq!(
+        ProcessTarget::from_installation_with_creation(42, 0, &installation).unwrap_err(),
+        ProcessError::InvalidExecutableIdentity
+    );
+    let epoch_target =
+        ProcessTarget::from_installation_with_creation(42, 123_456, &installation).unwrap();
+    assert_eq!(epoch_target.expected_creation_time_100ns(), Some(123_456));
 
     let forged = GameInstallation {
         channel: InstallationChannel::Manual,

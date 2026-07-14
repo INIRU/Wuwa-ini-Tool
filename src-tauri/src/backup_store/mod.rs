@@ -85,6 +85,19 @@ impl BackupStore {
         preview: &MergePreview,
         reason: ApplyReason,
     ) -> Result<ApplyResult, BackupError> {
+        self.apply_guarded(source, preview, reason, || Ok(()))
+    }
+
+    pub fn apply_guarded<F>(
+        &self,
+        source: &Path,
+        preview: &MergePreview,
+        reason: ApplyReason,
+        before_replace: F,
+    ) -> Result<ApplyResult, BackupError>
+    where
+        F: FnOnce() -> Result<(), BackupError>,
+    {
         validate_operation_reason(reason)?;
         let identity = resolve_source_identity(source)?;
         with_source_lock(&identity.lock_key, || {
@@ -95,6 +108,7 @@ impl BackupStore {
             let backup = self.create_from_snapshot(&snapshot, reason)?;
             require_cleanup_resolved(&backup.cleanup_pending)?;
             self.ensure_present_unchanged(&identity, &snapshot, &expected)?;
+            before_replace()?;
             // ReplaceFileW needs write access to the source. Release the Windows
             // no-write-sharing handle only after the final pre-commit check; the
             // atomic capture fingerprint reconciles any race after this point.

@@ -183,6 +183,45 @@ fn focus_mode_is_default_off_and_preview_never_mutates() {
 }
 
 #[test]
+fn select_all_refreshes_new_eligible_processes_but_explicit_selection_does_not() {
+    let first = normal_process(10, "first.exe");
+    let second = normal_process(11, "second.exe");
+    let mut all = controller([first.clone()], true);
+    let preview = all.preview().unwrap();
+    all.activate(&FocusActivationRequest {
+        preview_token: preview.token,
+        selected: Vec::new(),
+        select_all_eligible: true,
+        select_all_confirmed: true,
+    })
+    .unwrap();
+    all.backend_mut()
+        .processes
+        .insert(second.identity.pid, second.clone());
+    all.refresh_selected().unwrap();
+    assert!(all.selected().contains(&first.identity));
+    assert!(all.selected().contains(&second.identity));
+
+    let mut explicit = controller([first.clone()], true);
+    let preview = explicit.preview().unwrap();
+    explicit
+        .activate(&FocusActivationRequest {
+            preview_token: preview.token,
+            selected: vec![first.identity.clone()],
+            select_all_eligible: false,
+            select_all_confirmed: false,
+        })
+        .unwrap();
+    explicit
+        .backend_mut()
+        .processes
+        .insert(second.identity.pid, second.clone());
+    explicit.refresh_selected().unwrap();
+    assert!(explicit.selected().contains(&first.identity));
+    assert!(!explicit.selected().contains(&second.identity));
+}
+
+#[test]
 fn telemetry_thresholds_are_bounded_before_they_reach_preview_or_policy() {
     let unsafe_thresholds = FocusThresholds {
         sample_interval_ms: 1,
