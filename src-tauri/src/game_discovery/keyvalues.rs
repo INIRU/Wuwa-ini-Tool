@@ -201,7 +201,7 @@ pub(crate) fn parse_library_folders(input: &[u8]) -> Result<Vec<PathBuf>, Discov
             return Err(DiscoveryError::InvalidKeyValues("library_path"));
         }
         let path = PathBuf::from(raw_path);
-        if !path.is_absolute() {
+        if !path.is_absolute() && !is_windows_absolute_path(raw_path) {
             return Err(DiscoveryError::InvalidKeyValues("relative_library_path"));
         }
         paths.push(path);
@@ -223,16 +223,48 @@ pub(crate) fn parse_app_manifest(input: &[u8]) -> Result<String, DiscoveryError>
         return Err(DiscoveryError::InvalidKeyValues("unexpected_appid"));
     }
     let install_dir = text_property(properties, "installdir")?;
-    if install_dir.is_empty()
-        || install_dir.len() > 255
-        || install_dir.trim() != install_dir
-        || install_dir == "."
-        || install_dir == ".."
-        || install_dir.contains(['/', '\\', ':'])
-    {
+    if !is_safe_windows_component(install_dir) {
         return Err(DiscoveryError::InvalidKeyValues("unsafe_installdir"));
     }
     Ok(install_dir.to_owned())
+}
+
+fn is_windows_absolute_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let drive_absolute = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    let unc_absolute = bytes.len() >= 5
+        && matches!(bytes[0], b'\\' | b'/')
+        && matches!(bytes[1], b'\\' | b'/')
+        && !matches!(bytes[2], b'\\' | b'/');
+    drive_absolute || unc_absolute
+}
+
+fn is_safe_windows_component(component: &str) -> bool {
+    if component.is_empty()
+        || component.len() > 255
+        || component.trim_matches([' ', '.']) != component
+        || component.chars().any(char::is_control)
+        || component.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+    {
+        return false;
+    }
+
+    let basename = component
+        .split_once('.')
+        .map_or(component, |(basename, _)| basename)
+        .trim_end_matches([' ', '.'])
+        .to_ascii_uppercase();
+    if matches!(basename.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CLOCK$") {
+        return false;
+    }
+    let numbered_device = basename
+        .strip_prefix("COM")
+        .or_else(|| basename.strip_prefix("LPT"));
+    !numbered_device
+        .is_some_and(|number| number.len() == 1 && matches!(number.as_bytes()[0], b'1'..=b'9'))
 }
 
 fn text_property<'a>(

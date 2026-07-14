@@ -39,6 +39,7 @@ pub(crate) fn validate_with_channel(
 
     Ok(GameInstallation {
         channel,
+        requires_user_confirmation: false,
         game_root: canonical_root,
         executable,
         engine_ini,

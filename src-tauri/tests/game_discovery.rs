@@ -64,6 +64,7 @@ fn manual_selection_derives_only_the_validated_engine_ini_leaf() {
     let result = validate_game_executable(&fixture.executable).unwrap();
 
     assert_eq!(result.channel, InstallationChannel::Manual);
+    assert!(!result.requires_user_confirmation);
     assert_eq!(result.game_root, fixture.game_root.canonicalize().unwrap());
     assert_eq!(
         result.executable,
@@ -198,7 +199,26 @@ fn discovers_user_reported_program_files_shape_from_kuro_hint() {
 
     assert_eq!(installations.len(), 1);
     assert_eq!(installations[0].channel, InstallationChannel::Kuro);
+    assert!(installations[0].requires_user_confirmation);
     assert_eq!(installations[0].engine_ini, fixture.engine_ini());
+}
+
+#[test]
+fn uninstall_hint_without_a_publisher_still_requires_user_confirmation() {
+    let fixture = GameFixture::new("Wuthering Waves Game");
+    let provider = StaticProvider {
+        uninstall_entries: vec![UninstallEntry {
+            display_name: "Wuthering Waves".into(),
+            publisher: None,
+            install_location: fixture.game_root.clone(),
+        }],
+        ..StaticProvider::default()
+    };
+
+    let installations = discover_with_provider(&provider).unwrap();
+
+    assert_eq!(installations.len(), 1);
+    assert!(installations[0].requires_user_confirmation);
 }
 
 #[test]
@@ -254,6 +274,7 @@ fn discovers_non_default_steam_library_from_bounded_metadata() {
 
     assert_eq!(installations.len(), 1);
     assert_eq!(installations[0].channel, InstallationChannel::Steam);
+    assert!(!installations[0].requires_user_confirmation);
     assert_eq!(
         installations[0].game_root,
         game_root.canonicalize().unwrap()
@@ -286,7 +307,23 @@ fn rejects_malformed_duplicate_and_oversized_keyvalues() {
 
 #[test]
 fn rejects_traversal_or_path_shaped_steam_install_directory() {
-    for installdir in ["../outside", "folder/child", r"C:\\outside", "."] {
+    for installdir in [
+        "../outside",
+        "folder/child",
+        r"C:\\outside",
+        ".",
+        "..",
+        "game.",
+        "game ",
+        " game",
+        "game\tname",
+        "game<name",
+        "game>name",
+        "game|name",
+        "game?name",
+        "game*name",
+        "game:name",
+    ] {
         let manifest =
             format!("\"AppState\" {{ \"appid\" \"3513350\" \"installdir\" \"{installdir}\" }}");
         assert!(
@@ -294,6 +331,142 @@ fn rejects_traversal_or_path_shaped_steam_install_directory() {
             "installdir must be one safe directory component: {installdir}"
         );
     }
+}
+
+#[test]
+fn rejects_windows_reserved_steam_install_directory_basenames() {
+    for installdir in [
+        "CON",
+        "con.txt",
+        "CON .txt",
+        "PRN",
+        "AUX.cfg",
+        "NUL",
+        "CLOCK$",
+        "COM1",
+        "com9.log",
+        "com1 .log",
+        "LPT1",
+        "lpt9.data",
+    ] {
+        let manifest =
+            format!("\"AppState\" {{ \"appid\" \"3513350\" \"installdir\" \"{installdir}\" }}");
+        assert!(
+            parse_app_manifest(manifest.as_bytes()).is_err(),
+            "reserved device basename must be rejected: {installdir}"
+        );
+    }
+}
+
+#[test]
+fn parses_an_escaped_windows_library_path_on_non_windows_test_hosts() {
+    let paths = parse_library_folders(br#""libraryfolders" { "0" { "path" "D:\\SteamLibrary" } }"#)
+        .unwrap();
+
+    assert_eq!(paths, vec![PathBuf::from(r"D:\SteamLibrary")]);
+}
+
+#[test]
+fn default_steam_library_is_considered_when_library_metadata_is_absent_or_corrupt() {
+    for metadata in [None, Some(b"malformed".as_slice())] {
+        let steam = tempfile::tempdir().unwrap();
+        let game_root = steam.path().join("steamapps/common/Wuthering Waves");
+        let executable = game_root.join("Client/Binaries/Win64").join(EXE_NAME);
+        fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        fs::write(&executable, b"exe").unwrap();
+        fs::write(
+            steam.path().join("steamapps/appmanifest_3513350.acf"),
+            "\"AppState\" { \"appid\" \"3513350\" \"installdir\" \"Wuthering Waves\" }",
+        )
+        .unwrap();
+        if let Some(metadata) = metadata {
+            fs::write(steam.path().join("steamapps/libraryfolders.vdf"), metadata).unwrap();
+        }
+        let provider = StaticProvider {
+            steam_roots: vec![steam.path().to_path_buf()],
+            ..StaticProvider::default()
+        };
+
+        let installations = discover_with_provider(&provider).unwrap();
+
+        assert_eq!(installations.len(), 1);
+        assert_eq!(
+            installations[0].game_root,
+            game_root.canonicalize().unwrap()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_a_steam_common_symlink_that_escapes_the_library() {
+    use std::os::unix::fs::symlink;
+
+    let steam = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let outside_common = outside.path().join("common");
+    let game_root = outside_common.join("Wuthering Waves");
+    let executable = game_root.join("Client/Binaries/Win64").join(EXE_NAME);
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    fs::write(&executable, b"exe").unwrap();
+    fs::create_dir_all(steam.path().join("steamapps")).unwrap();
+    symlink(&outside_common, steam.path().join("steamapps/common")).unwrap();
+    fs::write(
+        steam.path().join("steamapps/appmanifest_3513350.acf"),
+        "\"AppState\" { \"appid\" \"3513350\" \"installdir\" \"Wuthering Waves\" }",
+    )
+    .unwrap();
+    fs::write(
+        steam.path().join("steamapps/libraryfolders.vdf"),
+        format!(
+            "\"libraryfolders\" {{ \"0\" {{ \"path\" \"{}\" }} }}",
+            steam.path().display()
+        ),
+    )
+    .unwrap();
+    let provider = StaticProvider {
+        steam_roots: vec![steam.path().to_path_buf()],
+        ..StaticProvider::default()
+    };
+
+    assert!(discover_with_provider(&provider).unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_steam_metadata_reached_through_a_symlinked_parent() {
+    use std::os::unix::fs::symlink;
+
+    let steam = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let game_root = outside.path().join("steamapps/common/Wuthering Waves");
+    let executable = game_root.join("Client/Binaries/Win64").join(EXE_NAME);
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
+    fs::write(&executable, b"exe").unwrap();
+    fs::write(
+        outside.path().join("steamapps/appmanifest_3513350.acf"),
+        "\"AppState\" { \"appid\" \"3513350\" \"installdir\" \"Wuthering Waves\" }",
+    )
+    .unwrap();
+    fs::write(
+        outside.path().join("steamapps/libraryfolders.vdf"),
+        format!(
+            "\"libraryfolders\" {{ \"0\" {{ \"path\" \"{}\" }} }}",
+            steam.path().display()
+        ),
+    )
+    .unwrap();
+    symlink(
+        outside.path().join("steamapps"),
+        steam.path().join("steamapps"),
+    )
+    .unwrap();
+    let provider = StaticProvider {
+        steam_roots: vec![steam.path().to_path_buf()],
+        ..StaticProvider::default()
+    };
+
+    assert!(discover_with_provider(&provider).unwrap().is_empty());
 }
 
 #[test]
