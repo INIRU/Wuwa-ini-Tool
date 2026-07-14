@@ -37,7 +37,27 @@
 - Produces: `App`, a Tauri library entrypoint `wuwa_ini_tool_lib::run()`, frontend scripts `test`, `typecheck`, `build`, and Rust library tests.
 - Consumes: none.
 
-- [ ] **Step 1: Add the failing shell test**
+- [ ] **Step 1: Add declarative test harness files, dependencies, an empty App shell, and the failing behavior test**
+
+Generated/declarative scaffolding is the explicit non-behavior TDD exception.
+Use npm to resolve and lock current compatible releases:
+
+```bash
+npm install react react-dom react-i18next i18next lucide-react @tauri-apps/api @tauri-apps/plugin-dialog @tauri-apps/plugin-opener @tauri-apps/plugin-process @tauri-apps/plugin-updater
+npm install --save-dev @tauri-apps/cli typescript vite @vitejs/plugin-react vitest jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event @types/react @types/react-dom eslint prettier
+```
+
+Create the TypeScript/Vite/Vitest configuration and `package.json` scripts,
+then create a behavior-free shell:
+
+```tsx
+// src/App.tsx
+export function App() {
+  return <main />;
+}
+```
+
+Now add the failing behavior test:
 
 ```tsx
 // src/App.test.tsx
@@ -57,16 +77,9 @@ describe('App', () => {
 - [ ] **Step 2: Run the test and record RED**
 
 Run: `npm test -- --run src/App.test.tsx`  
-Expected: FAIL because `package.json`/`App` does not exist.
+Expected: FAIL because the empty App shell has no `Wuwa ini Tool` heading.
 
-- [ ] **Step 3: Add minimal foundation files and dependencies**
-
-Use npm to resolve and lock current compatible releases:
-
-```bash
-npm install react react-dom react-i18next i18next lucide-react @tauri-apps/api @tauri-apps/plugin-dialog @tauri-apps/plugin-opener @tauri-apps/plugin-process @tauri-apps/plugin-updater
-npm install --save-dev @tauri-apps/cli typescript vite @vitejs/plugin-react vitest jsdom @testing-library/react @testing-library/jest-dom @testing-library/user-event @types/react @types/react-dom eslint prettier
-```
+- [ ] **Step 3: Implement the minimal tested App behavior and Rust/Tauri foundation**
 
 `package.json` scripts must be exactly:
 
