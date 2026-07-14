@@ -1,5 +1,6 @@
 import {
   cloneElement,
+  useEffect,
   useId,
   useState,
   type FocusEvent,
@@ -23,38 +24,69 @@ export interface TooltipProps {
   label: string;
 }
 
+interface OpenReasons {
+  click: boolean;
+  focus: boolean;
+  hover: boolean;
+}
+
+const closedReasons: OpenReasons = {
+  click: false,
+  focus: false,
+  hover: false,
+};
+
 export function Tooltip({ children, label }: TooltipProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [openReasons, setOpenReasons] = useState<OpenReasons>(closedReasons);
   const tooltipId = useId();
+  const isOpen = openReasons.click || openReasons.focus || openReasons.hover;
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpenReasons(closedReasons);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
+
+  const describedBy = [
+    children.props["aria-describedby"],
+    isOpen ? tooltipId : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const trigger = cloneElement(children, {
-    "aria-describedby": isOpen ? tooltipId : undefined,
+    "aria-describedby": describedBy || undefined,
     onBlur: (event) => {
       children.props.onBlur?.(event);
-      setIsOpen(false);
+      setOpenReasons((current) => ({ ...current, focus: false }));
     },
     onClick: (event) => {
       children.props.onClick?.(event);
-      setIsOpen(true);
+      setOpenReasons((current) => ({ ...current, click: !current.click }));
     },
     onFocus: (event) => {
       children.props.onFocus?.(event);
-      setIsOpen(true);
+      setOpenReasons((current) => ({ ...current, focus: true }));
     },
     onKeyDown: (event) => {
       children.props.onKeyDown?.(event);
-      if (event.key === "Escape") {
-        setIsOpen(false);
-        event.currentTarget.focus();
-      }
     },
     onMouseEnter: (event) => {
       children.props.onMouseEnter?.(event);
-      setIsOpen(true);
+      setOpenReasons((current) => ({ ...current, hover: true }));
     },
     onMouseLeave: (event) => {
       children.props.onMouseLeave?.(event);
-      setIsOpen(false);
+      setOpenReasons((current) => ({ ...current, hover: false }));
     },
   });
 
