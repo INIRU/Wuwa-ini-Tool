@@ -53,6 +53,13 @@ Source design: `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`
   in the catalog, label them as user-defined and runtime-unverified, validate
   their INI syntax, and preserve them through profile save/export/import and
   the normal diff/backup transaction.
+- REQ-CAT-007: Catalog the source-reviewed streaming/thread options
+  `r.Streaming.PoolSize`, `r.ParallelFrustumCull`,
+  `r.ParallelOcclusionCull`, `r.Streaming.FullyLoadUsedTextures`,
+  `r.Streaming.HLODStrategy`, and `r.Streaming.UsingKuroStreamingPriority` with
+  bilingual caveats and evidence states. Do not place them in a built-in preset
+  until PC WuWa runtime evidence satisfies the promotion policy; options
+  reported as overridden must be labeled ignored or regressed.
 
 ## CPU and Game Process
 
@@ -76,14 +83,35 @@ Source design: `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`
 - REQ-CPU-008: Focus Mode must protect system, protected, critical, denied,
   game/tool/launcher, foreground/visible-window families, active-audio owners
   when detectable, and default communication/recording/streaming exclusions;
-  Discord, OBS/Streamlabs, capture overlays, and user-pinned exclusions are not
-  modified unless the user deliberately removes their protection.
+  Discord, OBS/Streamlabs/XSplit, Xbox Game Bar, NVIDIA/AMD capture overlays,
+  and common voice/streaming helpers are non-removable built-in exclusions,
+  while users may pin additional canonical executable exclusions.
 - REQ-CPU-009: Focus Mode may lower Normal to Below Normal by default, never
   auto-change High/Realtime, and must restore exact prior state only after
   PID, creation time, executable identity, and current applied value still
   match. Persist a crash-recovery journal, never use IFEO/global registry,
   power-plan, service, core-parking, or network-QoS tweaks, and surface every
   skipped/denied/partial restore.
+- REQ-CPU-010: The recommended Focus Mode policy must be adaptive rather than
+  blanket: sample total and per-process CPU load at a bounded interval, require
+  sustained contention before lowering an eligible selected process, use
+  hysteresis before restoring it, and restore immediately when it becomes
+  foreground, visible, audio-active, protected, or the game is no longer the
+  foreground workload. Preview must expose thresholds and reasons.
+- REQ-CPU-011: Focus Mode may inspect WuWa process QoS and, when explicitly
+  enabled, clear execution-speed throttling only for the validated game process
+  with readback and exact session restore. It must not assign Efficiency Mode
+  to communication/capture workloads, change multimedia scheduling, or claim
+  High/Realtime priority is required for performance.
+- REQ-CPU-012: Surface live CPU contention and action telemetry sufficient to
+  explain when Focus Mode acted, but do not read game memory, inject an FPS
+  counter, or promise an FPS gain. Recommended defaults remain Normal priority
+  plus topology-aware CPU Sets; Above Normal/High/Realtime stay explicit.
+- REQ-CPU-013: Distinguish aggregate CPU contention from a saturated WuWa hot
+  thread at low overall CPU use. Main-thread Headroom may act on eligible
+  background CPU Sets under either measured condition, but if no external
+  contention is present it must report an engine-bound hint and avoid claiming
+  that process tuning can remove the hitch.
 
 ## Backup and Recovery
 
@@ -93,6 +121,32 @@ Source design: `docs/superpowers/specs/2026-07-14-wuwa-ini-tool-design.md`
   prune pinned backups.
 - REQ-BACKUP-003: Store versioned metadata and SHA-256 and verify backup and
   restore integrity.
+
+## Cache Maintenance
+
+- REQ-CACHE-001: Provide separate `WuWa shader cache`, `NVIDIA shader cache`,
+  and `Both` cleanup selections; no target may be selected implicitly.
+- REQ-CACHE-002: Preview each selected target's validated roots, file count,
+  and byte total and require an explicit destructive confirmation before any
+  deletion. Explain that caches are not backed up, will be regenerated, and
+  may cause shader compilation, loading delays, or temporary stutter.
+- REQ-CACHE-003: Derive WuWa cache roots only from the validated game tree and
+  restrict deletion to the versioned allowlist `Client/Saved/PSO` and
+  `Client/Saved/PSOReport`; never delete `Config`, `SaveGames`, `LocalStorage`,
+  logs, patches, or another sibling.
+- REQ-CACHE-004: Restrict NVIDIA cleanup to the current user's documented
+  `NVIDIA/DXCache`, `NVIDIA/GLCache`, and `NVIDIA Corporation/NV_Cache`
+  directory contents. Warn that these caches are shared by other games and
+  applications and do not claim to isolate WuWa entries.
+- REQ-CACHE-005: Refuse WuWa cleanup while the validated game is running,
+  never terminate a game, NVIDIA, Discord, recording, or streaming process,
+  never elevate automatically, never follow symlinks or reparse points, keep
+  the allowlisted root directories, and report deleted, skipped, locked,
+  denied, changed, and failed outcomes per target.
+- REQ-CACHE-006: Keep cache cleanup outside Engine.ini backup/restore history
+  and record only a local bounded maintenance receipt with target, counts,
+  bytes, result, and time; do not store deleted cache contents or arbitrary
+  file names.
 
 ## UI and Accessibility
 

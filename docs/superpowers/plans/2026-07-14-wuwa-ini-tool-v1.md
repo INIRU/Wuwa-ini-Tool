@@ -499,7 +499,16 @@ same user/session eligibility, system/critical/protected/denied/game/tool/
 foreground/visible-family exclusions, active-audio and Discord/OBS/streaming
 protections, pinned exclusions, Normal-to-Below-Normal only, explicit select-all
 confirmation, PID-reuse/creation-time/image guards, external priority changes,
-game exit restore, crash journal recovery, and partial/denied restore.
+game exit restore, crash journal recovery, and partial/denied restore. Add
+adaptive-policy tests for sustained total/per-process contention, bounded
+sampling, hysteresis, immediate protection-triggered restore, hard built-in
+communication/capture exclusions, per-logical-core saturation telemetry,
+hybrid/uniform/small-topology CPU Set headroom decisions, game QoS
+normalization/readback/restore, and never hard-affining WuWa to one or two cores
+by default. Cover a WuWa hot thread near one logical-core capacity while total
+CPU remains modest: background CPU Set isolation may qualify, blanket priority
+restraint must not, and no eligible competitor must yield an explanatory
+engine-bound/no-action result.
 
 - [ ] **Step 2: Run RED**
 
@@ -522,6 +531,15 @@ PID, creation time, canonical image identity, and current app-applied priority
 to match. Built-in exclusions protect communication, capture, streaming,
 overlay, foreground/visible, critical, and active-audio workloads. Do not copy
 third-party algorithms or implement registry/power-plan/service/network tweaks.
+The recommended mode acts only after sustained measured contention and restores
+with hysteresis; selection alone is not a blanket priority reduction. Use
+language-neutral Windows performance counters for per-logical-processor
+telemetry and process/thread time deltas without reading game memory. On safe,
+sufficient topologies, soft CPU Sets may keep eligible background work off the
+game's performance-core headroom; unsupported/small systems skip this action.
+QoS normalization may clear execution-speed throttling only on the validated
+game process, with readback and exact restore. Discord/voice/OBS/Streamlabs/
+XSplit/Xbox/NVIDIA/AMD capture families are non-removable exclusions.
 
 - [ ] **Step 4: Run GREEN locally and Windows integration conditionally**
 
@@ -545,12 +563,14 @@ git commit -m "feat: add Windows process tuning"
 
 **Files:**
 - Create: `src-tauri/tests/supervisor.rs`
+- Create: `src-tauri/tests/cache_cleanup.rs`
 - Create: `src-tauri/src/supervisor/mod.rs`, `state.rs`, `events.rs`
-- Create: `src-tauri/src/commands/mod.rs`, `config.rs`, `game.rs`, `profiles.rs`, `process.rs`, `backups.rs`
+- Create: `src-tauri/src/cache_cleanup/mod.rs`, `model.rs`, `validation.rs`, `windows.rs`, `unsupported.rs`
+- Create: `src-tauri/src/commands/mod.rs`, `config.rs`, `game.rs`, `profiles.rs`, `process.rs`, `backups.rs`, `maintenance.rs`
 - Modify: `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tauri.conf.json`
 
 **Interfaces:**
-- Produces typed commands `get_app_snapshot`, `preview_ini`, `apply_ini`, `restore_backup`, `save_profile`, `discover_game`, `launch_game`, `get_cpu_topology`, `apply_process_settings`, `preview_focus_mode`, `activate_focus_mode`, `deactivate_focus_mode`, and supervisor status events.
+- Produces typed commands `get_app_snapshot`, `preview_ini`, `apply_ini`, `restore_backup`, `save_profile`, `discover_game`, `launch_game`, `get_cpu_topology`, `apply_process_settings`, `preview_focus_mode`, `activate_focus_mode`, `deactivate_focus_mode`, `preview_cache_cleanup`, `run_cache_cleanup`, and supervisor status events.
 - Consumes: Tasks 3–7.
 
 - [ ] **Step 1: Add compile-only supervisor/command stubs, then write failing validation tests**
@@ -582,6 +602,12 @@ Add Focus Mode supervisor tests for activation only after the validated game is
 active, exact-once restore on game exit/explicit disable/quit, crash-journal
 recovery before new activation, new eligible process discovery with bounded
 polling, and no mutation when preview/confirmation is stale.
+Add cache-cleanup tests for independently selecting WuWa, NVIDIA, or both;
+exact allowlisted roots; current-user containment; root preservation; game-
+running refusal; explicit confirmation; stale target-set rejection; reparse and
+symlink refusal; locked/denied partial results; no automatic elevation or
+process termination; bounded receipts; and preservation of Config, SaveGames,
+LocalStorage, logs, patches, and unrelated application-data siblings.
 
 - [ ] **Step 2: Run RED**
 
@@ -599,6 +625,14 @@ shell plugins are not granted broad frontend access. Replace the scaffold's
 null CSP with a restrictive local-app policy that permits only the assets and
 Tauri IPC required by the bundled UI; production builds must not depend on a
 remote origin.
+
+Implement cache cleanup behind backend-owned typed commands. Preview performs
+no mutation and returns canonical roots, counts, bytes, warnings, and an opaque
+confirmation token bound to the target set. Run revalidates containment and
+game state, deletes only non-reparse children while retaining the allowlisted
+roots, never kills a process or elevates, and returns per-target partial
+outcomes. NVIDIA cache cleanup is explicitly driver-wide; do not pretend that
+opaque NVIDIA files can be attributed only to WuWa.
 
 - [ ] **Step 4: Run GREEN and full Rust suite**
 
@@ -623,7 +657,9 @@ git commit -m "feat: integrate secure Tauri commands"
 - Create: `src/features/process/CpuTopology.tsx`, `PriorityPicker.tsx`, `ProcessStatus.tsx`
 - Create: `src/features/profiles/ProfileList.tsx`
 - Create: `src/features/backups/BackupTimeline.tsx`
+- Create: `src/features/maintenance/CacheCleanup.tsx`
 - Create: corresponding `*.test.tsx` files for each feature
+- Modify: `catalog/options.json`, `src-tauri/tests/catalog_profiles.rs`
 - Modify: `src/App.tsx`, `src/styles/global.css`, localization JSON
 
 **Interfaces:**
@@ -665,6 +701,15 @@ an explicit apply that still uses the current preview token.
 Add Focus Mode UI tests for default-off state, protected Discord/recording/
 streaming rows, exclusion reasons, user-pinned exclusions, select-all warning,
 active/restoring/partial states, and per-process restore results.
+Add cache-maintenance UI tests for no default selection; WuWa-only, NVIDIA-only,
+and both previews; root/count/byte summaries; shared NVIDIA cache warning;
+shader-rebuild/stutter warning; explicit destructive confirmation; disabled
+WuWa cleanup while the game runs; and partial locked/denied result rendering.
+Add catalog tests and UI rows for the source-reviewed PoolSize, parallel culling,
+HLOD/fully-load, and Kuro streaming-priority options. Assert that none enters a
+built-in preset, mobile observations do not create automatic PC values, and
+overridden options render ignored/regressed warnings rather than performance
+claims.
 
 - [ ] **Step 2: Run RED**
 
@@ -687,6 +732,11 @@ use the same preview token, diff, backup, and apply commands.
 The Advanced Editor also accepts full-document paste and a backend-owned local
 file picker. Both populate a replacement candidate and complete diff but never
 write until the user confirms `Backup and Apply`.
+Settings includes a Maintenance section with independent WuWa and NVIDIA shader
+cache targets. It always previews before enabling `Delete selected caches`,
+uses a confirmation dialog with no pre-checked destructive action, and shows a
+compact per-target receipt. NVIDIA is labeled as a shared driver cache rather
+than a WuWa-only cache.
 
 - [ ] **Step 4: Run GREEN, typecheck, and production build**
 

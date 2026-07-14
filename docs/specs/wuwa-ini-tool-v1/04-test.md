@@ -11,6 +11,7 @@ passed.
 | REQ-CAT-* | schema tests; fixture validation; evidence review |
 | REQ-CPU-* | Rust unit tests; Windows helper-process integration tests; security review |
 | REQ-BACKUP-* | hash/retention/restore/failure tests; update preservation test |
+| REQ-CACHE-* | allowlist/containment/reparse tests; preview-token tests; locked-file partial results; Windows fixture cleanup |
 | REQ-UI-* | component tests; keyboard/accessibility review; desktop/min-size browser QA |
 | REQ-UPD-* | updater unit/UI tests; tamper rejection; staging update; release asset review |
 | REQ-OSS-* | repository file review; Issue/PR workflow validation |

@@ -12,6 +12,10 @@
     "lossless INI merge with diff and verified backups",
     "integrated launcher and tray process supervisor",
     "all Windows priority classes are user-selectable with High and Realtime warnings",
+    "Focus Mode is default-off, previewed, exclusion-driven, session-scoped, and exactly restored",
+    "Discord, active audio, communication, recording, streaming, foreground, and critical processes are protected by default",
+    "Focus Mode is contention-driven and per-core aware, uses soft background CPU Sets only on safe topologies, and never defaults WuWa to one or two cores",
+    "WuWa and NVIDIA shader caches are separate preview-first maintenance targets with exact allowlists and no forced process termination",
     "original T monogram; no Kuro character derivative"
   ],
   "codexThinkPreflight": {
@@ -39,14 +43,15 @@
     "ini-engine-reviewer": "approved",
     "ui-contract-implementer": "completed",
     "ui-contract-reviewer": "approved",
-    "backup-store-implementer": "final-recovery-fix-in-progress",
-    "backup-store-reviewer": "changes-requested",
+    "backup-store-implementer": "completed",
+    "backup-store-reviewer": "approved",
     "catalog-profile-implementer": "completed",
     "catalog-profile-reviewer": "approved",
     "game-discovery-implementer": "completed",
-    "game-discovery-reviewer": "approved"
+    "game-discovery-reviewer": "approved",
+    "process-control-implementer": "in-progress"
   },
-  "completedTasks": [1, 2, 3, 5, 6],
+  "completedTasks": [1, 2, 3, 4, 5, 6],
   "openMinors": [
     "Task 1: configure a restrictive CSP before privileged UI commands ship",
     "Task 2: complete native browser visual, long-copy, and focus QA when a browser backend is available",
@@ -57,5 +62,5 @@
     "Task 6: harden superscript COM/LPT and CONIN$/CONOUT$ aliases",
     "Task 6: execute registry, junction, and reparse discovery tests on Windows CI and a clean VM"
   ],
-  "next": "Complete Task 4 journal finalization fixes, then Task 7 Windows CPU and priority control"
+  "next": "Complete Task 7 Windows CPU, priority, and reversible WuWa Focus Mode control"
 }

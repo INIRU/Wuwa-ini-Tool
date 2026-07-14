@@ -71,6 +71,8 @@ Primary modules:
    source URLs, tested game versions, dates, and support states.
 8. `release_update`: checks the signed GitHub Release updater feed without
    blocking normal application startup.
+9. `cache_cleanup`: previews and removes only allowlisted WuWa PSO or
+   current-user NVIDIA shader-cache contents without following reparse points.
 
 The frontend receives typed DTOs and invokes narrow Tauri commands. It cannot
 submit arbitrary process names, arbitrary shell commands, or unrestricted
@@ -154,6 +156,40 @@ the source and requires a new diff instead of overwriting it.
 5. Read both settings back and show success, partial success, access denied,
    unsupported topology, or process exit.
 
+### Cache cleanup
+
+1. Offer three explicit target choices: WuWa shader cache, NVIDIA shader cache,
+   or both. No cleanup target is preselected.
+2. Derive WuWa targets from the validated executable and allow only the
+   contents of `Client/Saved/PSO` and `Client/Saved/PSOReport`. Do not classify
+   `LocalStorage`, `Config`, `SaveGames`, logs, or patch data as shader cache.
+3. Resolve NVIDIA targets only below the current user's local application-data
+   directory: `NVIDIA/DXCache`, `NVIDIA/GLCache`, and
+   `NVIDIA Corporation/NV_Cache`. These are driver-wide caches, not WuWa-only
+   caches, so the UI says that other games and graphics applications will
+   rebuild shaders too.
+4. Preview canonical roots, item counts, and bytes. Bind confirmation to the
+   selected target set, then revalidate game state, roots, containment, and the
+   reparse-point policy immediately before deletion.
+5. Refuse WuWa cleanup while the validated game is running. Do not terminate
+   the game, driver services, Discord, recording, streaming, or another app;
+   locked files are skipped and reported rather than forced.
+6. Delete contents, not the allowlisted root directories; never follow a link
+   or reparse point and never elevate automatically. Report per-target deleted,
+   skipped, locked, denied, changed, and failed counts and bytes.
+7. Cache contents are regenerable and intentionally not copied into the
+   Engine.ini backup store. Show an irreversible-deletion warning and expected
+   first-launch recompilation/stutter, then keep only a bounded local receipt
+   without arbitrary file names.
+
+NVIDIA's documented complete manual procedure also changes Shader Cache Size
+and reboots before and after deletion. This app does not change driver settings
+or reboot Windows; it may therefore return a partial result when files remain
+in use and directs the user to NVIDIA's official procedure when needed.
+Cache cleanup is presented as corruption/stale-cache troubleshooting, not a
+routine FPS booster: deleting a healthy cache can temporarily worsen stutter
+until shaders and streaming state warm up again.
+
 CPU defaults are All cores and Normal. Available priority classes are Idle,
 Below Normal, Normal, Above Normal, High, and Realtime. High and Realtime are
 never selected automatically and always display a warning icon with hover,
@@ -195,7 +231,9 @@ Backups, Settings, and About.
 - Backups provides a timeline, source path, SHA-256, change summary, diff, pin,
   and restore actions.
 - Settings owns language, theme, close-to-tray, update preference, and game
-  path.
+  path. Its Maintenance section previews and runs separate WuWa/NVIDIA shader
+  cache cleanup, shows shared-cache and recompilation warnings, and renders a
+  per-target result receipt.
 - About presents version, MIT license, disclaimer, source, Issues, and
   contribution links.
 
@@ -239,23 +277,69 @@ WuWa game session.
 2. Protect Windows/system/protected/critical/session-0 processes, the game,
    this tool, launcher/overlay families, foreground and visible-window process
    families, and processes with active audio sessions when Windows reports
-   them. Keep versioned default exclusions for Discord/voice chat, OBS,
-   Streamlabs, XSplit, Xbox Game Bar, NVIDIA/AMD capture, and common streaming
-   helpers; users can pin additional canonical executable exclusions.
-3. The recommended policy changes only Normal to Below Normal. `Select all
-   eligible` still requires a preview and explicit confirmation. Idle, Below
-   Normal, High, and Realtime are not changed automatically.
-4. Store PID, process creation time, canonical executable identity, prior
+   them.
+3. Discord/voice chat, OBS, Streamlabs, XSplit, Xbox Game Bar, NVIDIA/AMD
+   capture, and common streaming helpers are hard built-in exclusions. Users
+   may add more pinned executable exclusions but cannot remove these built-ins.
+4. The recommended adaptive policy changes only Normal to Below Normal and only
+   after bounded samples show sustained total-CPU contention plus meaningful
+   CPU use by that background process. It uses release hysteresis and restores
+   immediately if the process becomes foreground, visible, audio-active, or
+   otherwise protected. `Select all eligible` selects candidates; it does not
+   mean every candidate is always restrained.
+5. Sample per-logical-processor utilization and game thread CPU-time deltas to
+   expose one- or two-core saturation that average CPU usage can hide. This is
+   explanatory telemetry, not an injected FPS counter or a claim that every
+   hitch is CPU-caused.
+6. On hybrid CPUs, the optional Main-thread Headroom policy may use soft CPU
+   Sets to keep eligible background work on E-cores or non-reserved cores while
+   leaving the game able to use all validated performance cores. On uniform
+   CPUs it activates only when enough physical cores remain. It never defaults
+   to hard-affining WuWa to one or two cores and skips unsupported or small
+   topologies.
+7. Inspect the validated game's process QoS. If the user enables QoS
+   normalization and Windows reports execution-speed throttling, clear that
+   throttle for the game session only, read it back, and restore the exact
+   original state. Do not force High or Realtime priority; Windows already
+   provides foreground scheduling behavior.
+8. Idle, Below Normal, High, and Realtime background processes are not changed
+   automatically.
+9. Store PID, process creation time, canonical executable identity, prior
    priority, and applied priority in a versioned app-data recovery journal.
-5. On game exit, explicit disable, tool exit, or next startup after a crash,
+   CPU Set and QoS changes record the same before/applied identity guards.
+10. On game exit, explicit disable, tool exit, or next startup after a crash,
    restore only when the same process instance and app-applied value still
    match. Never overwrite a later user/tool priority change.
-6. Report restored, skipped, exited, denied, identity-changed, externally
+11. Report restored, skipped, exited, denied, identity-changed, externally
    changed, and recovery-required outcomes per process.
+
+Adaptive activation has two independent signals: broad CPU contention and a
+sustained WuWa hot-thread/per-core saturation signal even when aggregate CPU is
+low. Priority reduction is useful only for broad contention. Main-thread
+Headroom can additionally isolate selected background CPU Sets on a safe
+topology. If neither signal has an eligible external competitor, the UI reports
+`Likely game-thread bound — no safe background action available` and does not
+pretend that changing priorities fixes the engine's serialized work.
 
 Focus Mode does not edit power plans, core parking, MMCSS, network QoS,
 services, the registry, IFEO, or persistent process rules. It makes no FPS
 guarantee and may reduce performance or responsiveness in selected apps.
+
+Epic's Unreal documentation confirms that frame time can be limited by a game
+thread or render thread even when aggregate CPU usage is modest. WuWa reports
+of one- or two-core saturation are treated as community evidence, so the app
+measures and explains per-core pressure before acting instead of asserting that
+every installation has the same bottleneck.
+
+The source-reviewed option catalog includes `r.Streaming.PoolSize`,
+`r.ParallelFrustumCull`, `r.ParallelOcclusionCull`,
+`r.Streaming.FullyLoadUsedTextures`, `r.Streaming.HLODStrategy`, and the
+Kuro-specific `r.Streaming.UsingKuroStreamingPriority`. They remain
+community-reported, experimental, ignored, or regressed until reproducible PC
+runtime evidence exists. In particular, a mobile observation of a 400 MB
+streaming pool is not converted into an automatic PC value, and options
+reported as overridden by higher-priority game code are not advertised as
+working tweaks.
 
 Options such as `MaxCPUCores=0`, `AsyncLoadingThreadPriority=1`, and unverified
 TaskGraph/RHI tuning are not shipped as verified CPU controls. Engine CPU
