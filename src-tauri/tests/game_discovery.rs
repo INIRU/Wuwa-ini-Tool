@@ -245,6 +245,8 @@ fn ignores_unrelated_uninstall_and_local_appdata_hints() {
 fn discovers_non_default_steam_library_from_bounded_metadata() {
     let steam = tempfile::tempdir().unwrap();
     let library = tempfile::tempdir().unwrap();
+    let steam_vdf_path = steam.path().to_string_lossy().replace('\\', "\\\\");
+    let library_vdf_path = library.path().to_string_lossy().replace('\\', "\\\\");
     let game_root = library.path().join("steamapps/common/Wuthering Waves");
     let executable = game_root.join("Client/Binaries/Win64").join(EXE_NAME);
     fs::create_dir_all(executable.parent().unwrap()).unwrap();
@@ -254,8 +256,7 @@ fn discovers_non_default_steam_library_from_bounded_metadata() {
         steam.path().join("steamapps/libraryfolders.vdf"),
         format!(
             "\"libraryfolders\" {{ \"0\" {{ \"path\" \"{}\" }} \"1\" {{ \"path\" \"{}\" }} }}",
-            steam.path().display(),
-            library.path().display()
+            steam_vdf_path, library_vdf_path
         ),
     )
     .unwrap();
