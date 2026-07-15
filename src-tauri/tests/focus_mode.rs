@@ -64,6 +64,17 @@ fn normal_process(pid: u32, image: &str) -> FocusProcessSnapshot {
     }
 }
 
+fn absolute_worker_executable() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        PathBuf::from(r"C:\opt\tools\worker.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("/opt/tools/worker.exe")
+    }
+}
+
 fn adaptive_decision(action: FocusAdaptiveAction) -> FocusAdaptiveDecision {
     FocusAdaptiveDecision {
         contention: FocusContentionKind::None,
@@ -379,7 +390,8 @@ fn pinned_and_default_communication_capture_streaming_apps_are_protected() {
 
 #[test]
 fn pinned_exclusions_are_resolved_only_from_a_fresh_preview_and_invalidate_old_tokens() {
-    let candidate = normal_process(10, "/opt/tools/worker.exe");
+    let executable = absolute_worker_executable();
+    let candidate = normal_process(10, executable.to_string_lossy().as_ref());
     let identity = candidate.identity.clone();
     let mut controller = controller([candidate], true);
     let preview = controller.preview().unwrap();
