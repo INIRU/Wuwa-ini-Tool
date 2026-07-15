@@ -127,7 +127,49 @@ jobs:
             Select-Object -First 1
           if (-not $dumpbin) { throw "dumpbin.exe was not found on the Windows runner." }
           & $dumpbin.FullName /dependents $testExe.FullName
-          & $dumpbin.FullName /imports $testExe.FullName
+          $imports = & $dumpbin.FullName /imports $testExe.FullName
+          $imports
+          Add-Type @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class NativeLoaderProbe {
+            [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+            public static extern IntPtr LoadLibrary(string path);
+            [DllImport("kernel32.dll", CharSet = CharSet.Ansi, SetLastError = true)]
+            public static extern IntPtr GetProcAddress(IntPtr module, string name);
+            [DllImport("kernel32.dll")]
+            public static extern bool FreeLibrary(IntPtr module);
+          }
+          '@
+          $currentDll = $null
+          $modules = @{}
+          $missing = [System.Collections.Generic.List[string]]::new()
+          foreach ($line in $imports) {
+            if ($line -match '^\s+([A-Za-z0-9_.-]+\.dll)\s*$') {
+              $currentDll = $Matches[1]
+              if (-not $modules.ContainsKey($currentDll)) {
+                $modules[$currentDll] = [NativeLoaderProbe]::LoadLibrary($currentDll)
+                if ($modules[$currentDll] -eq [IntPtr]::Zero) {
+                  $missing.Add("$currentDll::<load failed>")
+                }
+              }
+              continue
+            }
+            if ($currentDll -and $line -match '^\s+[0-9A-F]+\s+(\S+)\s*$') {
+              $symbol = $Matches[1]
+              $module = $modules[$currentDll]
+              if ($module -ne [IntPtr]::Zero -and [NativeLoaderProbe]::GetProcAddress($module, $symbol) -eq [IntPtr]::Zero) {
+                $missing.Add("$currentDll::$symbol")
+              }
+            }
+          }
+          foreach ($module in $modules.Values) {
+            if ($module -ne [IntPtr]::Zero) { [void][NativeLoaderProbe]::FreeLibrary($module) }
+          }
+          if ($missing.Count -gt 0) {
+            $missing | Sort-Object -Unique | ForEach-Object { Write-Error "Missing loader import: $_" }
+            throw "The Windows test executable imports unavailable DLL entry points."
+          }
       - name: Run Windows Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
       - name: Build unsigned CI-only NSIS bundle
