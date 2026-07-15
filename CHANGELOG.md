@@ -18,6 +18,8 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   instead of the preview Visual Studio environment behind `windows-latest`.
 - Added Windows test-binary execution to the regular CI gate so loader/API
   incompatibilities fail before a release tag is created.
+- Embedded the Common Controls v6 activation manifest into Windows Rust test
+  executables so `TaskDialogIndirect` resolves the same way as in Tauri builds.
 
 ## [1.0.0-beta.4] - 2026-07-15
 
