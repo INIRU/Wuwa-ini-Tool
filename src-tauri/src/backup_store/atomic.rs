@@ -2195,17 +2195,29 @@ fn apply_attributes(
         | FILE_ATTRIBUTE_OFFLINE
         | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED;
 
-    if let Some(original) = attributes.windows_file_attributes {
-        let supported = original & SUPPORTED;
-        let file_attributes = if supported == 0 {
-            FILE_ATTRIBUTE_NORMAL
-        } else {
-            supported
-        };
-        let mut info = get_windows_basic_info(file, path)?;
-        info.file_attributes = file_attributes;
-        set_windows_basic_info(file, path, &info)?;
-    }
+    let mut info = get_windows_basic_info(file, path)?;
+    info.file_attributes = match attributes.windows_file_attributes {
+        Some(original) => {
+            let supported = original & SUPPORTED;
+            if supported == 0 {
+                FILE_ATTRIBUTE_NORMAL
+            } else {
+                supported
+            }
+        }
+        None if attributes.readonly => {
+            (info.file_attributes & !FILE_ATTRIBUTE_NORMAL) | FILE_ATTRIBUTE_READONLY
+        }
+        None => {
+            let writable = info.file_attributes & !FILE_ATTRIBUTE_READONLY;
+            if writable == 0 {
+                FILE_ATTRIBUTE_NORMAL
+            } else {
+                writable
+            }
+        }
+    };
+    set_windows_basic_info(file, path, &info)?;
     Ok(())
 }
 
