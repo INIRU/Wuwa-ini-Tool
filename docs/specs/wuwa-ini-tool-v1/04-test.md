@@ -76,3 +76,25 @@ below pass on Windows CI and a clean Windows VM:
 - Recapture final 1200×800 and minimum-window desktop states, including the
   global updater prompt, keyboard focus, tooltips, long Korean/English copy, and
   high-contrast behavior.
+
+## Public beta release gate — 2026-07-15
+
+The public `v1.0.0-beta.6` prerelease was built from commit `fbe7bc3` after the
+full Windows CI run passed. The CI log proves Tauri selected
+`target/release/wuwa-ini-tool.exe`, not the disposable `process_fixture` test
+binary. The unsigned CI installer and signed release installer are both 4.1 MB
+NSIS PE executables.
+
+| Gate | Result |
+| --- | --- |
+| Main CI run `29381518275` | PASS — frontend/policy, Linux Rust, Windows Rust, NSIS artifact |
+| Draft release run `29381855443` | PASS — release policy, Windows Rust, signed NSIS, checksum, SBOM, required assets |
+| Updater metadata | PASS — `1.0.0-beta.6`, tag-qualified installer URL, non-empty signature |
+| Signature asset consistency | PASS — `latest.json` signature text matches the `.sig` asset byte-for-byte |
+| SHA-256 manifest | PASS — portable LF file; installer and signature both verify with `shasum -a 256 -c` |
+| SPDX SBOM | PASS — valid SPDX JSON asset |
+| GitHub release | PASS — public prerelease at `v1.0.0-beta.6` |
+
+This beta publication does not replace the remaining clean-VM install, launch,
+upgrade, uninstall, tamper, real-game, hardware-matrix, and Windows desktop QA
+required before stable `1.0.0`.

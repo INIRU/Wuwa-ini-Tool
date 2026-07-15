@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "spec": "wuwa-ini-tool-v1",
-  "status": "implementation-complete-release-gated",
-  "currentGate": "windows-release-verification",
-  "updatedAt": "2026-07-15T02:17:49+09:00",
+  "status": "beta-published-stable-release-gated",
+  "currentGate": "stable-windows-clean-vm-verification",
+  "updatedAt": "2026-07-15T10:50:00+09:00",
   "decisions": [
     "React TypeScript Vite plus Rust in Tauri v2",
     "Windows x64 NSIS distribution",
@@ -71,7 +71,7 @@
     "Task 7: execute helper-process, WASAPI, PDH, CPU Set, QoS, and Focus restore tests on Windows CI and a clean VM",
     "Task 8: execute the supervisor, single-instance, tray, updater-resume, and fail-closed process-observation paths on Windows CI and a clean VM",
     "Task 9: recapture the final global-updater shell at the minimum Windows viewport during Windows desktop QA",
-    "Task 13: build, install, upgrade, uninstall, and tamper-test the signed x64 NSIS release on Windows CI and a clean VM"
+    "Task 13: install, launch, upgrade, uninstall, and tamper-test the signed x64 NSIS beta on a clean Windows VM"
   ],
-  "next": "Run Task 13 Windows CI and clean-VM release verification, provision protected updater signing secrets, and publish only after the signed NSIS, updater, tamper, upgrade, restore, and hardware-matrix gates pass"
+  "next": "Collect clean-Windows install, runtime, update, tamper, restore, and hardware-matrix evidence before promoting a build to stable 1.0.0"
 }
