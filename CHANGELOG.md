@@ -21,6 +21,11 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Embedded the Common Controls v6 activation manifest into Windows Rust test
   executables so `TaskDialogIndirect` resolves the same way as in Tauri builds.
 
+### Fixed
+
+- Routed first-time metadata writes through the create-new transaction instead
+  of the Windows replace-existing path, preserving no-clobber semantics.
+
 ## [1.0.0-beta.4] - 2026-07-15
 
 ### Fixed

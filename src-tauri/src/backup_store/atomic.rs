@@ -303,7 +303,6 @@ pub(crate) enum RollbackSource {
         identity: (u64, u64),
         attributes: OriginalAttributes,
     },
-    Missing,
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
@@ -340,16 +339,15 @@ pub(crate) fn write_verified(
     bytes: &[u8],
     attributes: &OriginalAttributes,
 ) -> Result<AtomicWriteResult, BackupError> {
-    let rollback = if destination.exists() {
-        let (previous, fingerprint) = read_fingerprinted_file(destination)?;
-        RollbackSource::Bytes {
-            sha256: sha256_hex(&previous),
-            identity: fingerprint.identity,
-            bytes: previous,
-            attributes: attributes.clone(),
-        }
-    } else {
-        RollbackSource::Missing
+    if !destination.exists() {
+        return write_verified_if_missing(destination, bytes, attributes);
+    }
+    let (previous, fingerprint) = read_fingerprinted_file(destination)?;
+    let rollback = RollbackSource::Bytes {
+        sha256: sha256_hex(&previous),
+        identity: fingerprint.identity,
+        bytes: previous,
+        attributes: attributes.clone(),
     };
     write_verified_with_post_replace(destination, bytes, attributes, rollback, |_| Ok(()))
 }
@@ -461,7 +459,7 @@ where
     let receipt = match replace_file(
         destination,
         &temporary,
-        expected_old.as_ref(),
+        Some(&expected_old),
         &installed_fingerprint,
     ) {
         Ok(receipt) => receipt,
@@ -581,11 +579,7 @@ fn rollback_destination(
         let mut cleanup_pending = Vec::new();
         #[cfg(not(windows))]
         let cleanup_pending = Vec::new();
-        let expected =
-            expected_fingerprint(rollback).ok_or_else(|| BackupError::SourceConflict {
-                expected: "present_atomic_capture".to_owned(),
-                actual: "missing_expected_source".to_owned(),
-            })?;
+        let expected = expected_fingerprint(rollback);
         let captured = fingerprint_file(&capture)?;
         if captured != expected {
             return Err(BackupError::SourceConflict {
@@ -611,7 +605,7 @@ fn rollback_destination(
         return complete_capture_rollback_with_finalize(
             cleanup_pending,
             || {
-                persist_attributes_and_flush(destination, rollback_attributes(rollback)?)?;
+                persist_attributes_and_flush(destination, rollback_attributes(rollback))?;
                 let restored = fingerprint_file(destination)?;
                 if restored != expected {
                     return Err(BackupError::ReadbackMismatch {
@@ -626,13 +620,6 @@ fn rollback_destination(
         );
     }
     match rollback {
-        RollbackSource::Missing => {
-            if destination.exists() {
-                delete_file_no_follow(destination, receipt.installed.identity)?;
-                sync_parent(destination)?;
-            }
-            Ok(finalize_replace_receipt(receipt).into_iter().collect())
-        }
         RollbackSource::Backup {
             path,
             sha256,
@@ -655,30 +642,25 @@ fn rollback_destination(
     }
 }
 
-fn rollback_attributes(rollback: &RollbackSource) -> Result<&OriginalAttributes, BackupError> {
+fn rollback_attributes(rollback: &RollbackSource) -> &OriginalAttributes {
     match rollback {
         RollbackSource::Backup { attributes, .. } | RollbackSource::Bytes { attributes, .. } => {
-            Ok(attributes)
+            attributes
         }
-        RollbackSource::Missing => Err(BackupError::SourceConflict {
-            expected: "present_rollback_attributes".to_owned(),
-            actual: "missing_rollback_source".to_owned(),
-        }),
     }
 }
 
-fn expected_fingerprint(rollback: &RollbackSource) -> Option<FileFingerprint> {
+fn expected_fingerprint(rollback: &RollbackSource) -> FileFingerprint {
     match rollback {
         RollbackSource::Backup {
             sha256, identity, ..
         }
         | RollbackSource::Bytes {
             sha256, identity, ..
-        } => Some(FileFingerprint {
+        } => FileFingerprint {
             sha256: sha256.clone(),
             identity: *identity,
-        }),
-        RollbackSource::Missing => None,
+        },
     }
 }
 
@@ -2792,5 +2774,20 @@ mod tests {
 
         assert!(!generation_temp.exists());
         assert_eq!(fs::read(foreign).unwrap(), b"foreign");
+    }
+
+    #[test]
+    fn verified_write_installs_a_previously_missing_destination() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("metadata.json");
+        let attributes = OriginalAttributes {
+            readonly: false,
+            windows_file_attributes: None,
+        };
+
+        let result = write_verified(&destination, b"{}", &attributes).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"{}");
+        assert_eq!(result.sha256, sha256_hex(b"{}"));
     }
 }
