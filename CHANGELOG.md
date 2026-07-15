@@ -9,6 +9,7 @@ project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - Continue Windows clean-VM validation toward the stable `1.0.0` release.
+- Emit release checksum manifests with portable LF line endings.
 
 ## [1.0.0-beta.6] - 2026-07-15
 
