@@ -150,7 +150,8 @@ jobs:
           }
           $lines = foreach ($file in $bundleFiles) {
             $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLowerInvariant()
-            "$hash  $($file.Name)"
+            $assetName = $file.Name.Replace(" ", ".")
+            "$hash  $assetName"
           }
           Set-Content -Path "release-assets/SHA256SUMS.txt" -Value $lines -Encoding utf8NoBOM
       - name: Attach checksums and SBOM to draft release
@@ -178,5 +179,16 @@ jobs:
           foreach ($item in $required) {
             if (-not ($names | Where-Object { $_ -match $item.Pattern })) {
               throw "Missing required release asset: $($item.Label)."
+            }
+          }
+          $checksumNames = Get-Content "release-assets/SHA256SUMS.txt" | ForEach-Object {
+            if ($_ -notmatch '^[0-9a-f]{64}  (.+)$') {
+              throw "Malformed SHA256SUMS entry: $_"
+            }
+            $Matches[1]
+          }
+          foreach ($checksumName in $checksumNames) {
+            if ($checksumName -notin $names) {
+              throw "Checksum entry does not match a release asset: $checksumName"
             }
           }

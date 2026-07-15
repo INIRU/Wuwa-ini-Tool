@@ -20,7 +20,7 @@ function readJson(relativePath) {
   }
 }
 
-function cargoPackageVersion(source) {
+function cargoPackageMetadata(source) {
   const packageHeader = source.match(/^\[package\]\s*$/m);
   if (!packageHeader || packageHeader.index === undefined) {
     fail("src-tauri/Cargo.toml has no [package] section");
@@ -32,7 +32,10 @@ function cargoPackageVersion(source) {
     nextSection === -1 ? remaining : remaining.slice(0, nextSection);
   const version = packageSection?.match(/^version\s*=\s*"([^"]+)"\s*$/m)?.[1];
   if (!version) fail("src-tauri/Cargo.toml has no [package] version");
-  return version;
+  const defaultRun = packageSection?.match(
+    /^default-run\s*=\s*"([^"]+)"\s*$/m,
+  )?.[1];
+  return { version, defaultRun };
 }
 
 const requiredFiles = [
@@ -62,13 +65,13 @@ for (const relativePath of requiredFiles) {
 const packageJson = readJson("package.json");
 const packageLock = readJson("package-lock.json");
 const tauriConfig = readJson("src-tauri/tauri.conf.json");
-const cargoVersion = cargoPackageVersion(readText("src-tauri/Cargo.toml"));
+const cargoPackage = cargoPackageMetadata(readText("src-tauri/Cargo.toml"));
 const versions = {
   "package.json": packageJson.version,
   "package-lock.json": packageLock.version,
   "package-lock.json root package": packageLock.packages?.[""]?.version,
   "src-tauri/tauri.conf.json": tauriConfig.version,
-  "src-tauri/Cargo.toml": cargoVersion,
+  "src-tauri/Cargo.toml": cargoPackage.version,
 };
 const uniqueVersions = new Set(Object.values(versions));
 
@@ -88,6 +91,11 @@ if (!readText("CHANGELOG.md").includes(`## [${version}]`)) {
 }
 if (tauriConfig.productName !== "Wuwa ini Tool")
   fail("unexpected Tauri productName");
+if (cargoPackage.defaultRun !== packageJson.name) {
+  fail(
+    `src-tauri/Cargo.toml default-run must be ${packageJson.name}, got ${cargoPackage.defaultRun ?? "missing"}`,
+  );
+}
 if (
   !Array.isArray(tauriConfig.bundle?.targets) ||
   !tauriConfig.bundle.targets.includes("nsis")
