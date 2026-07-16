@@ -43,4 +43,4 @@ windows = { version = "0.62", default-features = false, features = [
   "Win32_System_Variant",
   "Win32_UI_WindowsAndMessaging",
 ] }
-winreg = "0.55"
+winreg = "0.56"
